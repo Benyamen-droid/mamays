@@ -1,11 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Heart, Map as MapIcon, MapPin, Rotate3d, Search, ShieldAlert, Target, Timer, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Heart, LocateFixed, ShoppingBag, Map as MapIcon, MapPin, Rotate3d, Search, ShieldAlert, Target, Timer, X } from 'lucide-react'
 import { api, mensajeError } from '../../data'
 import { useAuth, useCart, useToast } from '../../context/AppContext'
-import { ACTIVE_STATUSES, CATEGORIAS, STATUS_LABEL, horarioPreset } from '../../lib/constants'
+import { ACTIVE_STATUSES, CATEGORIAS, STATUS_LABEL, VENTANA_ENTREGA, horarioPreset } from '../../lib/constants'
 import { openMapsSearch } from '../../lib/maps'
 import { DishComments, ReviewItem } from '../../components/reviews'
+import { RouteCard } from '../../components/RouteCard'
+import { estimateRoute, fmtKm, fmtMin, getMyLocation, lastLocation, type LatLng } from '../../lib/route'
 const Dish3DViewer = lazy(() => import('../../components/Dish3D'))
 import type { DishView, MamitaPublic, Order, Review } from '../../lib/types'
 import { estadoHorario, horarioTexto, primerNombre, soles } from '../../lib/format'
@@ -40,6 +42,25 @@ export function ComensalHome() {
   const [hideMine, setHideMine] = useState(false)
   const [onlyFavs, setOnlyFavs] = useState(false)
   const [showMap, setShowMap] = useState(false)
+  const [myLoc, setMyLoc] = useState<LatLng | null>(() => lastLocation(120))
+  const cart = useCart()
+  // agregar rápido desde el menú: si el plato tiene alérgenos, primero se avisa
+  const [rapido, setRapido] = useState<DishView | null>(null)
+  const [riesgo, setRiesgo] = useState(false)
+  function agregarRapido(d: DishView) {
+    if (d.allergens.length) { setRiesgo(false); setRapido(d); return }
+    cart.add(d.id, d.mamita_id, 1)
+  }
+  const resumenCarrito = useMemo(() => {
+    let total = 0
+    for (const l of cart.lines) {
+      const d = dishes?.find((x) => x.id === l.dish_id)
+      if (d) total += (d.price + d.extras.filter((x) => (l.extras ?? []).includes(x.id)).reduce((a, x) => a + x.price, 0)) * l.qty
+    }
+    return { total, mamitas: cart.mamitaIds.length }
+  }, [cart.lines, cart.mamitaIds, dishes])
+  const [cerca, setCerca] = useState(false)
+  const [locBusy, setLocBusy] = useState(false)
   const { favs, toggle } = useFavorites()
   const { toast } = useToast()
   const alergias = profile?.allergies ?? []
@@ -48,12 +69,30 @@ export function ComensalHome() {
     try {
       const [d, m, o] = await Promise.all([api.listDishes(), api.listMamitas(), api.listMyOrders()])
       setDishes(d); setMamitas(m)
-      setActive(o.find((x) => ACTIVE_STATUSES.includes(x.status)) ?? null)
+      // el pedido más importante primero: el que ya salió, luego el listo, luego el resto
+      const prio = (x: Order) => (x.status === 'en_camino' ? 0 : x.status === 'listo' ? 1 : x.status === 'reservado' ? 2 : 3)
+      setActive(o.filter((x) => ACTIVE_STATUSES.includes(x.status)).sort((a, b) => prio(a) - prio(b))[0] ?? null)
     } catch (e) { toast(mensajeError(e), 'error'); setDishes([]) }
   }, [toast])
   useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t) }, [load])
 
   const zonas = useMemo(() => [...new Set(mamitas.map((m) => m.zone))].sort(), [mamitas])
+  // distancia aproximada (a la zona de cada mamita) y tiempo caminando
+  const dist = useMemo(() => {
+    const r: Record<string, { n: number; km: string; min: string }> = {}
+    if (!myLoc) return r
+    for (const m of mamitas) {
+      if (m.lat == null || m.lng == null) continue
+      const e = estimateRoute(myLoc, { lat: m.lat, lng: m.lng }, 'foot')
+      r[m.id] = { n: e.km, km: fmtKm(e.km), min: e.km > 15 ? 'lejos' : fmtMin(e.min) }
+    }
+    return r
+  }, [myLoc, mamitas])
+  async function toggleCerca() {
+    if (cerca) return setCerca(false)
+    setLocBusy(true)
+    try { setMyLoc(await getMyLocation()); setCerca(true) } catch (e) { toast(mensajeError(e), 'error') } finally { setLocBusy(false) }
+  }
   const filtered = useMemo(() => {
     if (!dishes) return []
     const s = q.trim().toLowerCase()
@@ -65,8 +104,9 @@ export function ComensalHome() {
       .filter((d) => !onlyFavs || favs.includes(d.id))
       .filter((d) => !hideMine || !d.allergens.some((a) => alergias.includes(a)))
       .filter((d) => !s || [d.name, d.description, d.ingredients, d.mamita_name, d.category].join(' ').toLowerCase().includes(s))
-      .sort((a, b) => Number(b.available > 0) - Number(a.available > 0))
-  }, [dishes, q, cat, zona, mamita, minRating, onlyFavs, favs, hideMine, alergias])
+      .sort((a, b) => Number(b.available > 0) - Number(a.available > 0)
+        || (cerca ? (dist[a.mamita_id]?.n ?? 999) - (dist[b.mamita_id]?.n ?? 999) : 0))
+  }, [dishes, q, cat, zona, mamita, minRating, onlyFavs, favs, hideMine, alergias, cerca, dist])
   const ocultosPorAlergia = dishes ? dishes.filter((d) => d.allergens.some((a) => alergias.includes(a))).length : 0
   const mamitasMapa = useMemo(() => mamitas.filter((m) => !zona || m.zone === zona), [mamitas, zona])
   const onSelectMap = useCallback((id: string) => setMamita(id), [])
@@ -113,6 +153,10 @@ export function ComensalHome() {
           className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold ${onlyFavs ? 'border-guinda bg-guinda-50 text-guinda' : 'border-borde bg-white text-gris'}`}>
           <Heart size={14} fill={onlyFavs ? 'currentColor' : 'none'} /> Favoritos
         </button>
+        <button onClick={toggleCerca} aria-pressed={cerca} disabled={locBusy}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold ${cerca ? 'border-guinda bg-guinda-50 text-guinda' : 'border-borde bg-white text-gris'}`}>
+          {locBusy ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-guinda border-t-transparent" /> : <LocateFixed size={14} />} Cerca de mí
+        </button>
       </div>
 
       <button onClick={() => setShowMap(!showMap)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-cafe py-3.5 text-sm font-bold text-white">
@@ -136,18 +180,58 @@ export function ComensalHome() {
         <EmptyState icon={<Search />} title="No encontramos platitos" text="Prueba con otra categoría, zona o quita algún filtro." />
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-3">
-          {filtered.map((d) => <DishCard key={d.id} d={d} fav={favs.includes(d.id)} onFav={() => toggle(d.id)} userAllergies={alergias} />)}
+          {filtered.map((d) => <DishCard key={d.id} d={d} fav={favs.includes(d.id)} onFav={() => toggle(d.id)} userAllergies={alergias} distancia={dist[d.mamita_id]}
+            enCarrito={cart.qtyOf(d.id)} onAdd={() => (cart.qtyOf(d.id) ? cart.add(d.id, d.mamita_id, 1) : agregarRapido(d))} onRemove={() => cart.removeOne(d.id)} />)}
         </div>
       )}
 
-      {active && (
-        <Link to={`/comensal/pedidos/${active.id}`}
-          className="rise fixed inset-x-0 bottom-[78px] z-20 mx-auto flex w-[calc(100%-32px)] max-w-[448px] items-center gap-3 rounded-2xl bg-guinda px-4 py-3 text-white shadow-[0_12px_30px_-10px_rgb(163_23_59/0.8)]">
-          <span className="relative flex h-3 w-3"><span className="absolute h-full w-full animate-ping rounded-full bg-white/70" /><span className="relative h-3 w-3 rounded-full bg-white" /></span>
-          <span className="flex-1 text-sm"><b>Ver mi pedido</b> · {active.status === 'reservado' ? 'Falta completar el pago' : STATUS_LABEL[active.status]}</span>
+      {cart.count > 0 && (
+        <Link to="/comensal/carrito" data-testid="barra-carrito"
+          className="rise fixed inset-x-0 bottom-[78px] z-20 mx-auto flex w-[calc(100%-32px)] max-w-[448px] items-center gap-3 rounded-2xl bg-cafe px-4 py-3 text-white shadow-[0_12px_30px_-10px_rgb(46_35_38/0.8)]">
+          <span className="relative grid h-9 w-9 place-items-center rounded-xl bg-white/15"><ShoppingBag size={19} />
+            <span className="absolute -right-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-guinda px-1 text-[11px] font-extrabold">{cart.count}</span></span>
+          <span className="flex-1 text-sm leading-tight"><b>Ver carrito</b><span className="block text-[12px] text-white/75">
+            {cart.count} {cart.count === 1 ? 'plato' : 'platos'}{resumenCarrito.mamitas > 1 ? ` · ${resumenCarrito.mamitas} mamitas` : ''}</span></span>
+          <b className="whitespace-nowrap">{soles(resumenCarrito.total)}</b>
           <ChevronRight size={18} />
         </Link>
       )}
+      {active && (
+        <Link to={`/comensal/pedidos/${active.id}`}
+          className={`rise fixed inset-x-0 ${cart.count > 0 ? 'bottom-[148px]' : 'bottom-[78px]'} z-20 mx-auto flex w-[calc(100%-32px)] max-w-[448px] items-center gap-3 rounded-2xl bg-guinda px-4 py-3 text-white shadow-[0_12px_30px_-10px_rgb(211_52_52/0.8)]`}>
+          <span className="relative flex h-3 w-3"><span className="absolute h-full w-full animate-ping rounded-full bg-white/70" /><span className="relative h-3 w-3 rounded-full bg-white" /></span>
+          <span className="flex-1 text-sm"><b>Ver mi pedido</b> · {active.status === 'reservado' ? 'Falta completar el pago'
+            : active.status === 'en_camino' && active.aviso_salida_at ? `Ya salió · llega ${VENTANA_ENTREGA}` : STATUS_LABEL[active.status]}</span>
+          <ChevronRight size={18} />
+        </Link>
+      )}
+      {(cart.count > 0 || active) && <div className={cart.count > 0 && active ? 'h-36' : 'h-16'} aria-hidden />}
+
+      <Sheet open={!!rapido} onClose={() => setRapido(null)} title={rapido && rapido.allergens.some((a) => alergias.includes(a)) ? 'Confirma antes de agregar' : 'Alérgenos de este plato'}>
+        {rapido && (() => {
+          const mios = rapido.allergens.filter((a) => alergias.includes(a))
+          return (
+            <>
+              <div className={`rounded-2xl p-3 text-sm ${mios.length ? 'border border-[#f0b4b4] bg-[#fde8e8] text-[#8f1f1f]' : 'bg-[#fff4ea] text-[#7a3d0c]'}`} role="alert">
+                <b>{rapido.name}</b> contiene: {rapido.allergens.join(', ')}.
+                {mios.length > 0 && <span className="mt-1 block font-bold">⚠️ Incluye tu alergia: {mios.join(', ')}.</span>}
+              </div>
+              {mios.length > 0 && (
+                <label className="mt-3 flex items-start gap-2 text-sm">
+                  <input type="checkbox" className="mt-1 h-5 w-5 accent-[#D33434]" checked={riesgo} onChange={(e) => setRiesgo(e.target.checked)} />
+                  Entiendo el riesgo y confirmo que este pedido es seguro para quien lo va a comer.
+                </label>
+              )}
+              <div className="mt-5 space-y-2">
+                <Button disabled={mios.length > 0 && !riesgo} onClick={() => { cart.add(rapido.id, rapido.mamita_id, 1); setRapido(null) }}>
+                  {mios.length ? 'Agregar de todos modos' : 'Entendido, agregar al carrito'}
+                </Button>
+                <Button variant="secondary" onClick={() => setRapido(null)}>Mejor no</Button>
+              </div>
+            </>
+          )
+        })()}
+      </Sheet>
     </Screen>
   )
 }
@@ -170,14 +254,13 @@ export function DishDetail() {
   const nav = useNavigate()
   const { profile } = useAuth()
   const cart = useCart()
-  const { toast } = useToast()
   const { favs, toggle } = useFavorites()
   const [d, setD] = useState<DishView | null | undefined>(undefined)
   const [mamita, setMamita] = useState<MamitaPublic | null>(null)
   const [qty, setQty] = useState(1)
   const [photo, setPhoto] = useState(0)
   const [extras, setExtras] = useState<string[]>([])
-  const [conflict, setConflict] = useState(false)
+  const [agregado, setAgregado] = useState(false)
   const [allergyOpen, setAllergyOpen] = useState(false)
   const [confirmAllergens, setConfirmAllergens] = useState(false)
   const [riskChecked, setRiskChecked] = useState(false)
@@ -214,10 +297,9 @@ export function DishDetail() {
   }
   function agregar() {
     if (!d) return
-    const r = cart.add(d.id, d.mamita_id, qty, extras)
-    if (r === 'otra-mamita') return setConflict(true)
-    toast(`${qty} × ${d.name} en tu carrito`)
-    nav('/comensal/carrito')
+    cart.add(d.id, d.mamita_id, qty, extras)
+    // no hace falta ir plato por plato: puede seguir eligiendo (de esta u otras mamitas) y pagar todo junto
+    setAgregado(true)
   }
 
   return (
@@ -270,7 +352,7 @@ export function DishDetail() {
                 const on = extras.includes(x.id)
                 return (
                   <label key={x.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 ${on ? 'border-guinda bg-guinda-50' : 'border-borde'}`}>
-                    <input type="checkbox" className="h-5 w-5 accent-[#A3173B]" checked={on} onChange={() => setExtras(on ? extras.filter((e) => e !== x.id) : [...extras, x.id])} />
+                    <input type="checkbox" className="h-5 w-5 accent-[#D33434]" checked={on} onChange={() => setExtras(on ? extras.filter((e) => e !== x.id) : [...extras, x.id])} />
                     <span className="flex-1 text-sm font-semibold">{x.name}</span>
                     <span className="whitespace-nowrap text-sm font-bold text-guinda">+ {soles(x.price)}</span>
                   </label>
@@ -320,11 +402,10 @@ export function DishDetail() {
             </div>
             <ChevronRight />
           </Link>
-          <button onClick={() => openMapsSearch(mamita?.lat != null ? { lat: mamita.lat, lng: mamita.lng } : { query: d.mamita_zone })}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-crema py-2.5 text-sm font-bold text-cafe">
-            <MapPin size={16} className="text-guinda" /> Ver zona en Google Maps
-          </button>
         </div>
+        <RouteCard className="mt-4" title={`¿A cuánto está la cocina de ${primerNombre(d.mamita_name)}?`}
+          to={mamita?.lat != null && mamita.lng != null ? { lat: mamita.lat, lng: mamita.lng } : null}
+          toLabel={`Zona de ${primerNombre(d.mamita_name)}`} approx googleDest={d.mamita_zone} />
 
         <DishComments dishId={d.id} />
       </div>
@@ -378,7 +459,7 @@ export function DishDetail() {
         <div className="mt-3 flex flex-wrap gap-2">{d.allergens.map((a) => <Tag key={a} label={a} alert />)}</div>
         {choque.length > 0 && (
           <label className="mt-4 flex items-start gap-3 text-sm">
-            <input type="checkbox" className="mt-1 h-5 w-5 accent-[#A3173B]" checked={riskChecked} onChange={(e) => setRiskChecked(e.target.checked)} />
+            <input type="checkbox" className="mt-1 h-5 w-5 accent-[#D33434]" checked={riskChecked} onChange={(e) => setRiskChecked(e.target.checked)} />
             Entiendo el riesgo y confirmo que este pedido es seguro para quien lo va a comer (por ejemplo, es para otra persona).
           </label>
         )}
@@ -390,11 +471,15 @@ export function DishDetail() {
         </div>
       </Sheet>
 
-      <Sheet open={conflict} onClose={() => setConflict(false)} title="Tu carrito es de otra mamita">
-        <p className="text-sm text-gris">Cada pedido se prepara en una sola cocina. ¿Quieres vaciar tu carrito y empezar uno nuevo con {d.name}?</p>
-        <div className="mt-5 space-y-2">
-          <Button onClick={() => { cart.replaceWith(d.id, d.mamita_id, qty, extras); setConflict(false); nav('/comensal/carrito') }}>Vaciar y agregar</Button>
-          <Button variant="secondary" onClick={() => setConflict(false)}>Mantener mi carrito</Button>
+      <Sheet open={agregado} onClose={() => setAgregado(false)} title="¡Agregado a tu carrito!">
+        <div className="flex items-center gap-3 rounded-2xl bg-crema p-3">
+          <DishPhoto src={d.photos[0]} alt={d.name} className="h-12 w-12 rounded-xl object-cover" />
+          <div className="text-sm"><b>{qty} × {d.name}</b>{extrasSel.length > 0 && <span className="block text-xs text-gris">+ {extrasSel.map((x) => x.name).join(', ')}</span>}</div>
+        </div>
+        <p className="mt-3 text-sm text-gris">Puedes sumar más platos —de esta u otras mamitas— y pagar todo junto en un solo paso.</p>
+        <div className="mt-4 space-y-2">
+          <Button onClick={() => { setAgregado(false); nav('/comensal/carrito') }}>Ir al carrito · {cart.count} {cart.count === 1 ? 'plato' : 'platos'}</Button>
+          <Button variant="secondary" onClick={() => { setAgregado(false); nav('/comensal') }}>Seguir eligiendo platos</Button>
         </div>
       </Sheet>
     </Screen>
@@ -427,10 +512,9 @@ export function MamitaPublicPage() {
         <h1 className="mt-1 font-serif text-[32px] font-bold leading-tight">{m.full_name}</h1>
         <div className="mt-1 text-sm text-gris"><Stars value={m.rating} count={m.rating_count} /> · <MapPin size={13} className="inline" /> {m.public_zone_label || m.zone}</div>
         {m.bio && <p className="mt-3 text-[15px] text-gris">{m.bio}</p>}
-        <button onClick={() => openMapsSearch(m.lat != null ? { lat: m.lat, lng: m.lng } : { query: m.zone })}
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-borde bg-white py-3 text-sm font-bold text-cafe">
-          <MapPin size={16} className="text-guinda" /> Ver su zona en Google Maps
-        </button>
+        <RouteCard className="mt-4" title={`¿A cuánto está ${primerNombre(m.full_name)}?`}
+          to={m.lat != null && m.lng != null ? { lat: m.lat, lng: m.lng } : null}
+          toLabel={`Zona de ${primerNombre(m.full_name)}`} approx googleDest={m.zone} />
         {(m.home_description || m.home_photos.length > 0) && (
           <Card tone="crema" className="mt-5">
             <div className="font-serif text-xl font-bold">Así es mi hogar</div>

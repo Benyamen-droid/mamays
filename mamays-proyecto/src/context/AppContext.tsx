@@ -15,14 +15,18 @@ export const useAuth = () => useContext(Auth)
 
 // ---------------- Carrito (una mamita por pedido) ----------------
 interface CartCtx {
-  mamitaId: string | null
+  /** mamitas con platos en el carrito (se puede pedir a varias a la vez) */
+  mamitaIds: string[]
   lines: CartLine[]
   count: number
   /** mismo plato con distintos extras = líneas distintas */
-  add: (dishId: string, mamitaId: string, qty: number, extras?: string[]) => 'ok' | 'otra-mamita'
+  add: (dishId: string, mamitaId: string, qty: number, extras?: string[]) => 'ok'
+  /** cantidad de un plato en el carrito (sumando sus variantes con extras) */
+  qtyOf: (dishId: string) => number
   setQty: (key: string, qty: number) => void
   clear: () => void
-  replaceWith: (dishId: string, mamitaId: string, qty: number, extras?: string[]) => void
+  /** quita una porción del plato (la última variante agregada) */
+  removeOne: (dishId: string) => void
 }
 export const lineKey = (l: CartLine) => `${l.dish_id}|${[...(l.extras ?? [])].sort().join(',')}`
 const Cart = createContext<CartCtx>(null!)
@@ -51,34 +55,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { refresh().finally(() => setLoading(false)) }, [refresh])
 
   // carrito persistente
-  const [cart, setCart] = useState<{ mamitaId: string | null; lines: CartLine[] }>(() => {
-    try { return JSON.parse(localStorage.getItem(CART_KEY) || '') } catch { return { mamitaId: null, lines: [] } }
+  const [cart, setCart] = useState<{ lines: CartLine[] }>(() => {
+    try {
+      // carritos guardados por versiones anteriores (una sola mamita): se conservan
+      const c = JSON.parse(localStorage.getItem(CART_KEY) || '') as { mamitaId?: string | null; lines: CartLine[] }
+      return { lines: (c.lines ?? []).map((l) => ({ ...l, mamita_id: l.mamita_id ?? c.mamitaId ?? undefined })) }
+    } catch { return { lines: [] } }
   })
   useEffect(() => { try { localStorage.setItem(CART_KEY, JSON.stringify(cart)) } catch { /* sin almacenamiento */ } }, [cart])
 
   const cartValue = useMemo<CartCtx>(() => ({
-    mamitaId: cart.mamitaId,
+    mamitaIds: [...new Set(cart.lines.map((l) => l.mamita_id).filter((x): x is string => !!x))],
     lines: cart.lines,
     count: cart.lines.reduce((a, l) => a + l.qty, 0),
     add(dishId, mamitaId, qty, extras = []) {
-      if (cart.mamitaId && cart.mamitaId !== mamitaId && cart.lines.length) return 'otra-mamita'
       setCart((c) => {
-        const nueva = { dish_id: dishId, qty, extras: [...extras].sort() }
+        const nueva: CartLine = { dish_id: dishId, qty, extras: [...extras].sort(), mamita_id: mamitaId }
         const k = lineKey(nueva)
         const ex = c.lines.find((l) => lineKey(l) === k)
         const lines = ex ? c.lines.map((l) => (lineKey(l) === k ? { ...l, qty: Math.min(20, l.qty + qty) } : l)) : [...c.lines, nueva]
-        return { mamitaId, lines }
+        return { lines }
       })
       return 'ok'
     },
-    setQty(key, qty) {
+    qtyOf(dishId) { return cart.lines.filter((l) => l.dish_id === dishId).reduce((a, l) => a + l.qty, 0) },
+    removeOne(dishId) {
       setCart((c) => {
-        const lines = qty <= 0 ? c.lines.filter((l) => lineKey(l) !== key) : c.lines.map((l) => (lineKey(l) === key ? { ...l, qty } : l))
-        return { mamitaId: lines.length ? c.mamitaId : null, lines }
+        const idx = c.lines.map((l) => l.dish_id).lastIndexOf(dishId)
+        if (idx < 0) return c
+        const lines = c.lines.map((l, i) => (i === idx ? { ...l, qty: l.qty - 1 } : l)).filter((l) => l.qty > 0)
+        return { lines }
       })
     },
-    clear() { setCart({ mamitaId: null, lines: [] }) },
-    replaceWith(dishId, mamitaId, qty, extras = []) { setCart({ mamitaId, lines: [{ dish_id: dishId, qty, extras: [...extras].sort() }] }) },
+    setQty(key, qty) {
+      setCart((c) => ({ lines: qty <= 0 ? c.lines.filter((l) => lineKey(l) !== key) : c.lines.map((l) => (lineKey(l) === key ? { ...l, qty } : l)) }))
+    },
+    clear() { setCart({ lines: [] }) },
   }), [cart])
 
   // toasts
@@ -111,7 +123,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const authValue = useMemo<AuthCtx>(() => ({
     profile, loading, setProfile, refresh,
-    async signOut() { await api.signOut(); setProfile(null); setCart({ mamitaId: null, lines: [] }) },
+    async signOut() { await api.signOut(); setProfile(null); setCart({ lines: [] }) },
   }), [profile, loading, refresh])
 
   return (

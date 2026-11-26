@@ -1,7 +1,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Api, ImageKind } from './api'
 import type {
-  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, Review, ReviewsInput, SignUpInput,
+  AdminDatos, AppNotification, Dish, DishView, MamitaPublic, MisMonedas, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, PlaceOrdersInput, PointsEntry, Profile,
+  RankRow, Redemption, Review, ReviewsInput, Reward, Role, SignUpInput,
 } from '../lib/types'
 import { uid } from '../lib/format'
 
@@ -20,7 +21,7 @@ const DISH_FIELDS: (keyof Dish)[] = [
 const PROFILE_EDITABLE: (keyof Profile)[] = [
   'full_name', 'phone', 'zone', 'address', 'allergies', 'other_allergies', 'preferences', 'avoid_foods',
   'public_zone_label', 'bio', 'home_description', 'show_home', 'home_photos', 'avatar_url', 'yape_name', 'yape_phone', 'lat', 'lng',
-  'onboarded',
+  'onboarded', 'home_lat', 'home_lng',
 ]
 
 function mapDish(r: Record<string, unknown>): DishView {
@@ -47,6 +48,8 @@ function mapOrder(r: Record<string, unknown>): Order {
     ...(r as unknown as Order), status, items,
     subtotal: num(r.subtotal), delivery_cost: num(r.delivery_cost), total: num(r.total), rating: numOrNull(r.rating),
     history: (r.history as Order['history']) ?? [], guests: num(r.guests) || 1,
+    discount: num(r.discount), comision: numOrNull(r.comision),
+    delivery_lat: numOrNull(r.delivery_lat), delivery_lng: numOrNull(r.delivery_lng), pickup_lat: numOrNull(r.pickup_lat), pickup_lng: numOrNull(r.pickup_lng),
   }
 }
 
@@ -171,6 +174,59 @@ export class SupabaseApi implements Api {
     const r = check(await this.sb.from('orders').select('*, order_items(*)').eq('id', id).maybeSingle())
     return r ? mapOrder(r) : null
   }
+  async placeOrders(input: PlaceOrdersInput) {
+    return (check(await this.sb.rpc('place_orders', { p: input })) as string[]) ?? []
+  }
+  async getOrderGroup(id: string) {
+    const o = await this.getOrder(id)
+    if (!o) return []
+    if (!o.group_id) return [o]
+    const rows = check(await this.sb.from('orders').select('*, order_items(*)').eq('group_id', o.group_id).order('created_at'))
+    return (rows ?? []).map(mapOrder)
+  }
+
+  // ---------- Administrador ----------
+  async adminDatos(desde: string, hasta: string) {
+    const r = check(await this.sb.rpc('admin_datos', { p_desde: desde, p_hasta: hasta })) as AdminDatos
+    return {
+      comision_pct: Number(r.comision_pct), usuarios: r.usuarios,
+      pedidos: (r.pedidos ?? []).map((o) => ({
+        ...o, subtotal: Number(o.subtotal), delivery_cost: Number(o.delivery_cost), discount: Number(o.discount ?? 0), total: Number(o.total),
+        comision: Number(o.comision ?? 0), comensal_allergies: o.comensal_allergies ?? [],
+        items: (o.items ?? []).map((i) => ({ ...i, unit_price: Number(i.unit_price), extras_total: Number(i.extras_total ?? 0) })),
+      })),
+    }
+  }
+  async adminSetComision(pct: number) { return Number(check(await this.sb.rpc('admin_set_comision', { p_pct: pct }))) }
+  async comisionPct() { return Number(check(await this.sb.rpc('comision_pct'))) }
+
+  // ---------- Monedas Mamays ----------
+  async misMonedas() {
+    const r = check(await this.sb.rpc('mis_monedas')) as MisMonedas
+    return { ...r, saldo: Number(r.saldo), ganadas_mes: Number(r.ganadas_mes), pedidos: Number(r.pedidos), nivel: { ...r.nivel, mult: Number(r.nivel.mult) } }
+  }
+  async listPoints() {
+    const uid = await this.myId()
+    return (check(await this.sb.from('points_ledger').select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(100)) ?? []) as PointsEntry[]
+  }
+  async listRewards() {
+    const me = await this.currentProfile()
+    const rows = (check(await this.sb.from('rewards').select('*').eq('role', me?.role ?? 'comensal').order('sort')) ?? []) as Reward[]
+    return rows.map((r) => ({ ...r, value: Number(r.value) }))
+  }
+  async redeemReward(rewardId: string) {
+    const r = check(await this.sb.rpc('canjear_premio', { p_reward: rewardId })) as Redemption
+    return { ...r, value: Number(r.value) }
+  }
+  async listRedemptions() {
+    const uid = await this.myId()
+    const rows = (check(await this.sb.from('redemptions').select('*').eq('user_id', uid).order('created_at', { ascending: false })) ?? []) as Redemption[]
+    return rows.map((r) => ({ ...r, value: Number(r.value) }))
+  }
+  async ranking(role: Role) {
+    return (check(await this.sb.rpc('ranking_mes', { p_role: role })) ?? []) as RankRow[]
+  }
+
   async setOrderStatus(id: string, status: OrderStatus, reason = '') {
     check(await this.sb.rpc('set_order_status', { p_order: id, p_status: status, p_reason: reason }))
   }

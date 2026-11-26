@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
-  Banknote, Camera, Check, ChevronDown, ChevronRight, CircleHelp, DoorOpen, ListChecks, MessageCircle, Pause, PartyPopper, Plus,
+  Banknote, Camera, Check, ChevronDown, Coins, ChevronRight, CircleHelp, DoorOpen, ListChecks, MessageCircle, Pause, PartyPopper, Plus,
   ShieldCheck, ShoppingBag, Sparkles, Wallet,
 } from 'lucide-react'
 import { api, mensajeError } from '../../data'
@@ -76,7 +76,7 @@ export function MamitaWelcome() {
   const s = slides[step]
   const last = step === slides.length - 1
   return (
-    <div className="flex min-h-dvh flex-col bg-gradient-to-b from-guinda to-[#7E1230] px-6 pb-8 text-white safe-top">
+    <div className="flex min-h-dvh flex-col bg-gradient-to-b from-guinda to-[#A92527] px-6 pb-8 text-white safe-top">
       <div className="flex items-center justify-between pt-4">
         <div className="flex gap-1.5" aria-label={`Paso ${step + 1} de ${slides.length}`}>
           {slides.map((_, i) => <span key={i} className={`h-1.5 rounded-full transition-all ${i <= step ? 'w-7 bg-white' : 'w-3 bg-white/35'}`} />)}
@@ -116,7 +116,7 @@ export function PrimerosPasos({ dishCount }: { dishCount: number }) {
   const done = items.filter((i) => i.ok).length
   if (done === items.length) return null
   return (
-    <section className="mb-5 rounded-[22px] border border-[#f5d3dc] bg-guinda-50 p-4" aria-label="Primeros pasos">
+    <section className="mb-5 rounded-[22px] border border-[#FCD5D2] bg-guinda-50 p-4" aria-label="Primeros pasos">
       <div className="flex items-center justify-between">
         <div className="font-serif text-lg font-bold">Primeros pasos</div>
         <span className="text-xs font-bold text-guinda">{done}/{items.length}</span>
@@ -126,7 +126,7 @@ export function PrimerosPasos({ dishCount }: { dishCount: number }) {
         {items.map((i) => (
           <li key={i.t}>
             <Link to={i.to} className="flex items-center gap-2.5 text-sm">
-              <span className={`grid h-5 w-5 place-items-center rounded-full ${i.ok ? 'bg-ok text-white' : 'border-2 border-[#d9a9b6] bg-white'}`}>{i.ok && <Check size={12} strokeWidth={3} />}</span>
+              <span className={`grid h-5 w-5 place-items-center rounded-full ${i.ok ? 'bg-ok text-white' : 'border-2 border-[#F2B3AF] bg-white'}`}>{i.ok && <Check size={12} strokeWidth={3} />}</span>
               <span className={i.ok ? 'text-gris line-through' : 'font-semibold'}>{i.t}</span>
               {!i.ok && <ChevronRight size={15} className="ml-auto text-guinda" />}
             </Link>
@@ -168,6 +168,7 @@ const GUIA: { id: string; icon: ReactNode; title: string; intro: string; pasos: 
       { t: 'Revisa el pedido', d: 'Quién pide, qué platos y extras, si es delivery, recojo o para comer en tu hogar, y cómo pagó.' },
       { t: 'Acepta o rechaza', d: 'Si no puedes atenderlo, recházalo con un motivo amable. El comensal recibe el aviso.' },
       { t: 'Marca cada paso', d: 'Empezar a preparar → Listo (o Salió para delivery) → Entregado. El comensal lo ve al instante.' },
+      { t: '“Salió para delivery” avisa solo', d: 'El comensal recibe: “Tu almuerzo ya salió. Llegará entre 12:30 y 1:30 p. m.”. No necesitas escribirle.' },
       { t: 'Delivery: abre la ruta', d: 'Toca “Ruta en Google Maps” para llegar a la dirección.' },
     ],
     cta: { label: 'Ver mis pedidos', to: '/mamita/pedidos' },
@@ -206,6 +207,15 @@ const GUIA: { id: string; icon: ReactNode; title: string; intro: string; pasos: 
     cta: { label: 'Ir a mi perfil', to: '/mamita/perfil' },
   },
   {
+    id: 'monedas', icon: <Coins />, title: 'Monedas Mamays', intro: 'Mientras más vendes, más premios.',
+    pasos: [
+      { t: '1 moneda por cada S/ 1 vendido', d: 'Se abonan cuando marcas un pedido como entregado. Con 5 estrellas ganas +10.' },
+      { t: 'Sube de nivel', d: 'Con 10 ventas eres Mamita estrella (×1,25) y con 30, Mamita de oro (×1,5).' },
+      { t: 'Canjea premios', d: 'Tápers biodegradables, mandil bordado o bolsa térmica. Los descuentos de los comensales los paga MAMAYS: tú cobras completo.' },
+    ],
+    cta: { label: 'Ver mis monedas', to: '/mamita/monedas' },
+  },
+  {
     id: 'consejos', icon: <Sparkles />, title: 'Consejos para vender más', intro: 'Lo que más valoran los comensales.',
     pasos: [
       { t: 'Fotos reales y apetitosas', d: 'Con luz natural y el plato tal como lo entregas.' },
@@ -227,7 +237,7 @@ export function MamitaGuide() {
         {GUIA.map((g, gi) => {
           const isOpen = open === g.id
           return (
-            <section key={g.id} className={`overflow-hidden rounded-[22px] border bg-white ${isOpen ? 'border-guinda/40 shadow-[0_10px_24px_-16px_rgb(163_23_59/0.7)]' : 'border-borde'}`}>
+            <section key={g.id} className={`overflow-hidden rounded-[22px] border bg-white ${isOpen ? 'border-guinda/40 shadow-[0_10px_24px_-16px_rgb(211_52_52/0.7)]' : 'border-borde'}`}>
               <button onClick={() => setOpen(isOpen ? '' : g.id)} aria-expanded={isOpen} className="flex w-full items-center gap-3 p-4 text-left">
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-guinda-50 text-guinda">{g.icon}</span>
                 <span className="flex-1"><span className="block text-[11px] font-bold text-gris">PASO {gi + 1}</span><span className="block font-bold">{g.title}</span></span>

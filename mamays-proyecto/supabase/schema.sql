@@ -32,6 +32,22 @@ create table if not exists public.profiles (
   created_at        timestamptz not null default now()
 );
 
+-- Ubicación EXACTA de la cocina (privada): solo se comparte en un pedido aceptado de recojo / comer en el hogar.
+-- (lat/lng públicos son solo la zona aproximada)
+alter table public.profiles add column if not exists home_lat double precision;
+alter table public.profiles add column if not exists home_lng double precision;
+
+-- Coordenadas válidas dentro del Perú (o vacías)
+create or replace function public.coords_validas(la double precision, ln double precision)
+returns boolean language sql immutable as $$
+  select (la is null and ln is null) or (la between -18.6 and 0.1 and ln between -81.5 and -68.5)
+$$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_home_coords') then
+    alter table public.profiles add constraint profiles_home_coords check (public.coords_validas(home_lat, home_lng));
+  end if;
+end $$;
+
 -- onboarded: las cuentas que ya existían no ven la bienvenida; las nuevas sí
 do $$ begin
   if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='profiles' and column_name='onboarded') then
@@ -50,13 +66,20 @@ drop policy if exists "perfil: editar el propio" on public.profiles;
 create policy "perfil: editar el propio" on public.profiles
   for update using (id = auth.uid()) with check (id = auth.uid());
 
--- Nadie puede cambiarse de rol ni de correo editando su perfil
+-- Rol administrador (panel de ventas). NO se puede elegir al registrarse: se asigna con SQL (ver README).
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check check (role in ('comensal','mamita','admin'));
+
+-- Nadie puede cambiarse de rol ni de correo editando su perfil desde la app
+-- (solo el dueño del proyecto, desde el SQL Editor, puede asignar el rol admin)
 create or replace function public.protect_profile_fields()
 returns trigger language plpgsql as $$
 begin
-  new.role  := old.role;
-  new.email := old.email;
-  new.id    := old.id;
+  if current_user in ('authenticated', 'anon') then
+    new.role  := old.role;
+    new.email := old.email;
+  end if;
+  new.id := old.id;
   return new;
 end $$;
 
@@ -200,6 +223,21 @@ create table if not exists public.orders (
 
 -- Dirección de recojo: se copia al pedido solo cuando la mamita lo acepta
 alter table public.orders add column if not exists pickup_address text not null default '';
+-- Punto de entrega (si el comensal compartió su ubicación) y punto exacto de recojo (se revela al aceptar)
+alter table public.orders add column if not exists delivery_lat double precision;
+alter table public.orders add column if not exists delivery_lng double precision;
+alter table public.orders add column if not exists pickup_lat double precision;
+alter table public.orders add column if not exists pickup_lng double precision;
+-- Aviso “tu almuerzo ya salió” (una sola vez por pedido)
+alter table public.orders add column if not exists aviso_salida_at timestamptz;
+-- Pedido de varias mamitas a la vez: un pedido por mamita, mismo grupo y un solo pago
+alter table public.orders add column if not exists group_id uuid;
+create index if not exists orders_group_idx on public.orders(group_id) where group_id is not null;
+-- Comisión de MAMAYS (mínimo 2 %) guardada al entregar: si luego cambia el %, los pedidos pasados no cambian
+alter table public.orders add column if not exists comision numeric(10,2);
+-- Cupón de premio (monedas Mamays): el descuento lo asume MAMAYS
+alter table public.orders add column if not exists discount numeric(10,2) not null default 0;
+alter table public.orders add column if not exists coupon_id uuid;
 
 -- Pagos en línea (Mercado Pago): Yape con código de aprobación y tarjeta con 3-D Secure
 --   yape        → Yape en línea (celular + código de aprobación)
@@ -319,6 +357,70 @@ create unique index if not exists reviews_una_por_pedido
   where kind <> 'comment';
 
 alter table public.reviews enable row level security;
+
+-- ---------------------------------------------------------------------
+-- MONEDAS MAMAYS (gamificación): se ganan comprando (comensal) y vendiendo (mamita)
+-- y se canjean por descuentos u obsequios. Solo el servidor las abona o descuenta.
+-- ---------------------------------------------------------------------
+create table if not exists public.points_ledger (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  delta      int  not null,
+  reason     text not null check (reason in ('compra','primera_compra','venta','resena','cinco_estrellas','canje','ranking','devolucion')),
+  detail     text not null default '',
+  order_id   uuid references public.orders(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index if not exists points_user_idx on public.points_ledger(user_id, created_at desc);
+-- cada motivo se abona UNA vez por pedido (aunque se reintente)
+create unique index if not exists points_unico_por_pedido on public.points_ledger(user_id, reason, order_id) where order_id is not null;
+create unique index if not exists points_unico_ranking on public.points_ledger(user_id, detail) where reason = 'ranking';
+alter table public.points_ledger enable row level security;
+drop policy if exists "monedas: veo las mías" on public.points_ledger;
+create policy "monedas: veo las mías" on public.points_ledger for select using (user_id = auth.uid());
+
+create table if not exists public.rewards (
+  id          text primary key,
+  role        text not null check (role in ('comensal','mamita')),
+  name        text not null,
+  description text not null default '',
+  cost        int  not null check (cost > 0),
+  kind        text not null check (kind in ('descuento','delivery_gratis','obsequio')),
+  value       numeric(10,2) not null default 0,
+  active      boolean not null default true,
+  sort        int not null default 0
+);
+alter table public.rewards enable row level security;
+drop policy if exists "premios: todos los ven" on public.rewards;
+create policy "premios: todos los ven" on public.rewards for select using (active);
+insert into public.rewards(id, role, name, description, cost, kind, value, sort) values
+  ('dcto3',    'comensal', 'S/ 3 de descuento',            'Cupón para tu próximo pedido. Lo asume MAMAYS: la mamita cobra completo.', 120, 'descuento', 3, 1),
+  ('delivery', 'comensal', 'Delivery gratis',              'No pagas el delivery en tu próximo pedido.',                               90, 'delivery_gratis', 0, 2),
+  ('dcto5',    'comensal', 'S/ 5 de descuento',            'Cupón para tu próximo pedido.',                                            190, 'descuento', 5, 3),
+  ('tomatodo', 'comensal', 'Tomatodo MAMAYS',              'Obsequio: te contactamos para entregártelo en Puno.',                      400, 'obsequio', 0, 4),
+  ('tapers',   'mamita',   'Kit de 50 tápers biodegradables', 'Obsequio para tus deliveries. Te lo llevamos a tu cocina.',             300, 'obsequio', 0, 1),
+  ('mandil',   'mamita',   'Mandil MAMAYS bordado',        'Con tu nombre bordado.',                                                   450, 'obsequio', 0, 2),
+  ('bolsa',    'mamita',   'Bolsa térmica para delivery',  'Mantiene tus platos calientes hasta 2 horas.',                             600, 'obsequio', 0, 3)
+on conflict (id) do nothing;
+
+create table if not exists public.redemptions (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references public.profiles(id) on delete cascade,
+  reward_id   text not null references public.rewards(id),
+  reward_name text not null,
+  kind        text not null,
+  value       numeric(10,2) not null default 0,
+  cost        int  not null,
+  code        text not null unique,
+  status      text not null default 'activo' check (status in ('activo','usado','pendiente_entrega','entregado')),
+  order_id    uuid references public.orders(id) on delete set null,
+  created_at  timestamptz not null default now(),
+  used_at     timestamptz
+);
+create index if not exists redemptions_user_idx on public.redemptions(user_id, created_at desc);
+alter table public.redemptions enable row level security;
+drop policy if exists "canjes: veo los míos" on public.redemptions;
+create policy "canjes: veo los míos" on public.redemptions for select using (user_id = auth.uid());
 drop policy if exists "reseñas: todos pueden leer" on public.reviews;
 create policy "reseñas: todos pueden leer" on public.reviews for select using (true);
 drop policy if exists "comentarios: borrar los míos" on public.reviews;
@@ -388,11 +490,26 @@ revoke all on function public.notify(uuid,text,text,uuid) from public, anon, aut
 
 create or replace function public.expire_reservations()
 returns void language sql security definer set search_path = public as $$
-  update public.orders
-     set status = 'expirado',
-         history = history || jsonb_build_array(jsonb_build_object('status','expirado','at',now()))
-   where status = 'reservado' and reserved_until < now();
+  -- las reservas vencidas liberan la porción y devuelven el cupón usado
+  with vencidos as (
+    update public.orders
+       set status = 'expirado',
+           history = history || jsonb_build_array(jsonb_build_object('status','expirado','at',now()))
+     where status = 'reservado' and reserved_until < now()
+    returning coupon_id
+  )
+  update public.redemptions set status = 'activo', order_id = null, used_at = null
+   where id in (select coupon_id from vencidos where coupon_id is not null);
 $$;
+
+-- Hora actual del servidor (Lima se calcula con 'America/Lima'). Las pruebas la reemplazan para simular fechas.
+create or replace function public.ahora()
+returns timestamptz language sql stable as $$ select now() $$;
+
+-- (v2.6) Se quitó el cierre de pedidos de las 10:00 a. m.: se puede pedir a cualquier hora
+drop function if exists public.estado_pedidos();
+drop function if exists public.pedidos_abiertos();
+drop function if exists public.hora_cierre();
 
 -- Crea el pedido, valida stock con bloqueo de fila y reserva 15 min si el pago es Yape
 create or replace function public.place_order(p jsonb)
@@ -414,10 +531,15 @@ declare
   v_status   text;
   v_now      timestamptz := now();
   v_guests   int := coalesce((p->>'guests')::int, 1);
+  v_dlat     double precision := nullif(p->>'delivery_lat','')::double precision;
+  v_dlng     double precision := nullif(p->>'delivery_lng','')::double precision;
   v_ext      jsonb;
   v_ext_tot  numeric;
   v_ext_id   text;
   v_found    jsonb;
+  v_group    uuid := nullif(current_setting('mamays.grupo', true), '')::uuid;  -- solo lo pone place_orders
+  v_cup      public.redemptions%rowtype;
+  v_desc     numeric := 0;
 begin
   if v_uid is null then raise exception 'NO_AUTENTICADO'; end if;
   select * into v_me from public.profiles where id = v_uid;
@@ -450,10 +572,14 @@ begin
   -- Todo pago previo (Yape, tarjeta o constancia) reserva la porción 15 minutos; el efectivo va directo
   v_status := case when v_pay = 'efectivo' then 'enviado' else 'reservado' end;
 
+  if (v_dlat is null) <> (v_dlng is null) or not public.coords_validas(v_dlat, v_dlng) then
+    raise exception 'UBICACION_INVALIDA';
+  end if;
+
   insert into public.orders (code, comensal_id, comensal_name, mamita_id, mamita_name, status, mode,
                              payment_method, subtotal, delivery_cost, total, delivery_address,
                              receiver_name, receiver_phone, payer_name, notes, reserved_until, history,
-                             guests, terms_accepted_at, terms_version)
+                             guests, terms_accepted_at, terms_version, delivery_lat, delivery_lng, group_id)
   values (v_code, v_uid, v_me.full_name, v_mamita.id, v_mamita.full_name, v_status, v_mode, v_pay,
           0, 0, 0,
           case when v_mode = 'delivery' then trim(p->>'delivery_address') else '' end,
@@ -465,7 +591,10 @@ begin
           jsonb_build_array(jsonb_build_object('status', v_status, 'at', v_now)),
           v_guests,
           case when v_mode = 'en_casa' then v_now end,
-          case when v_mode = 'en_casa' then left(coalesce(p->>'terms_version', 'v1'), 20) else '' end)
+          case when v_mode = 'en_casa' then left(coalesce(p->>'terms_version', 'v1'), 20) else '' end,
+          case when v_mode = 'delivery' then v_dlat end,
+          case when v_mode = 'delivery' then v_dlng end,
+          v_group)
   returning id into v_order;
 
   for v_item in select * from jsonb_array_elements(p->'items') loop
@@ -504,7 +633,22 @@ begin
     if v_mode = 'delivery' then v_deliv := greatest(v_deliv, coalesce(v_dish.delivery_cost, 0)); end if;
   end loop;
 
-  update public.orders set subtotal = v_sub, delivery_cost = v_deliv, total = v_sub + v_deliv
+  -- Cupón de monedas Mamays (descuento o delivery gratis)
+  if nullif(p->>'coupon','') is not null then
+    select * into v_cup from public.redemptions where id = (p->>'coupon')::uuid and user_id = v_uid for update;
+    if not found or v_cup.status <> 'activo' or v_cup.kind not in ('descuento','delivery_gratis') then raise exception 'CUPON_INVALIDO'; end if;
+    if v_cup.kind = 'delivery_gratis' then
+      if v_mode <> 'delivery' then raise exception 'CUPON_SOLO_DELIVERY'; end if;
+      v_desc := v_deliv;
+    else
+      v_desc := least(v_cup.value, v_sub);
+    end if;
+    update public.redemptions set status = 'usado', order_id = v_order, used_at = now() where id = v_cup.id;
+  end if;
+
+  update public.orders set subtotal = v_sub, delivery_cost = v_deliv, discount = v_desc,
+         coupon_id = case when v_desc > 0 or v_cup.id is not null then v_cup.id end,
+         total = v_sub + v_deliv - v_desc
    where id = v_order;
 
   if v_status = 'enviado' then
@@ -512,6 +656,38 @@ begin
   end if;
 
   return v_order;
+end $$;
+
+-- Pedido de varios platos de VARIAS mamitas en un solo paso: crea un pedido por mamita
+-- (mismo grupo y un solo pago). Si uno falla (stock, cierre…), no se crea ninguno.
+create or replace function public.place_orders(p jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_groups jsonb := coalesce(p->'groups', '[]'::jsonb);
+  v_n      int   := jsonb_array_length(coalesce(p->'groups', '[]'::jsonb));
+  v_gid    uuid;
+  v_g      jsonb;
+  v_i      int := 0;
+  v_ids    jsonb := '[]'::jsonb;
+  v_id     uuid;
+begin
+  if v_n = 0 then raise exception 'CARRITO_VACIO'; end if;
+  if v_n > 5 then raise exception 'DEMASIADAS_MAMITAS'; end if;
+  if (select count(distinct g->>'mamita_id') from jsonb_array_elements(v_groups) g) <> v_n then raise exception 'MAMITA_REPETIDA'; end if;
+  if v_n > 1 and p->>'mode' = 'en_casa' then raise exception 'EN_CASA_UNA_MAMITA'; end if;
+  if v_n > 1 and p->>'payment_method' = 'yape_manual' then raise exception 'YAPE_MANUAL_UNA_MAMITA'; end if;
+
+  v_gid := case when v_n > 1 then gen_random_uuid() end;
+  perform set_config('mamays.grupo', coalesce(v_gid::text, ''), true);
+  for v_g in select * from jsonb_array_elements(v_groups) loop
+    v_id := public.place_order((p - 'groups' - 'coupon')
+              || jsonb_build_object('mamita_id', v_g->'mamita_id', 'items', v_g->'items')
+              || case when v_i = 0 and nullif(p->>'coupon','') is not null then jsonb_build_object('coupon', p->'coupon') else '{}'::jsonb end);
+    v_ids := v_ids || to_jsonb(v_id::text);
+    v_i := v_i + 1;
+  end loop;
+  perform set_config('mamays.grupo', '', true);
+  return v_ids;
 end $$;
 
 -- El comensal adjunta la constancia de Yape dentro de los 15 minutos
@@ -522,6 +698,7 @@ begin
   select * into v from public.orders where id = p_order for update;
   if not found or v.comensal_id <> auth.uid() then raise exception 'PEDIDO_NO_EXISTE'; end if;
   if v.status <> 'reservado' or v.payment_method <> 'yape_manual' then raise exception 'ESTADO_INVALIDO'; end if;
+
   if v.reserved_until < now() then
     update public.orders set status = 'expirado',
       history = history || jsonb_build_array(jsonb_build_object('status','expirado','at',now()))
@@ -567,17 +744,41 @@ begin
          pickup_address = case
            when p_status = 'aceptado' and v.mode in ('recojo','en_casa')
              then (select address from public.profiles where id = v.mamita_id)
-           else pickup_address end
+           else pickup_address end,
+         -- punto exacto de la cocina si la mamita lo marcó; si no, su zona aproximada
+         pickup_lat = case
+           when p_status = 'aceptado' and v.mode in ('recojo','en_casa')
+             then (select coalesce(home_lat, lat) from public.profiles where id = v.mamita_id)
+           else pickup_lat end,
+         pickup_lng = case
+           when p_status = 'aceptado' and v.mode in ('recojo','en_casa')
+             then (select coalesce(home_lng, lng) from public.profiles where id = v.mamita_id)
+           else pickup_lng end
    where id = p_order;
 
   v_msg := case p_status
     when 'aceptado'   then '¡La mamita aceptó tu pedido! Ya verificó tu pago.'
     when 'preparando' then 'Tu almuerzo se está preparando con mucho cariño.'
     when 'listo'      then case when v.mode = 'en_casa' then '¡Tu mesa está lista! La mamita te espera.' else 'Tu pedido está listo para recojo.' end
-    when 'en_camino'  then 'Tu pedido va en camino.'
+    when 'en_camino'  then 'Tu almuerzo de ' || v.mamita_name || ' ya salió. Llegará entre 12:30 y 1:30 p. m.'
     when 'entregado'  then '¡Buen provecho! Cuéntanos qué tal estuvo.'
     when 'rechazado'  then 'La mamita no pudo aceptar tu pedido. ' || coalesce(p_reason,'')
     else null end;
+
+  -- “Ya salió”: se avisa UNA sola vez por pedido y queda guardado en el pedido (se ve en Mis pedidos)
+  if p_status = 'en_camino' then
+    if v.aviso_salida_at is not null then v_msg := null; end if;
+    update public.orders set aviso_salida_at = coalesce(aviso_salida_at, now()) where id = p_order;
+  end if;
+  -- Pedido cancelado o rechazado: el cupón vuelve a estar disponible
+  if p_status in ('cancelado','rechazado') and v.coupon_id is not null then
+    update public.redemptions set status = 'activo', order_id = null, used_at = null where id = v.coupon_id and status = 'usado';
+  end if;
+  -- Entregado: monedas para el comensal y la mamita
+  if p_status = 'entregado' then
+    update public.orders set comision = round(subtotal * public.comision_pct() / 100, 2) where id = p_order;
+    perform public.abonar_monedas_pedido(p_order);
+  end if;
 
   if p_status = 'cancelado' then
     if v.status = 'enviado' then
@@ -592,14 +793,28 @@ end $$;
 -- Guarda el intento de pago y alarga la reserva mientras el comensal completa la verificación
 create or replace function public.register_payment_attempt(p_order uuid, p_payment_id text, p_detail text)
 returns void language sql security definer set search_path = public as $$
+  -- se aplica a todo el grupo (pedido de varias mamitas pagado de una vez)
   update public.orders
      set payment_id = coalesce(p_payment_id, ''), payment_detail = coalesce(p_detail, ''),
          reserved_until = greatest(coalesce(reserved_until, now()), now() + interval '10 minutes')
-   where id = p_order and status = 'reservado';
+   where status = 'reservado'
+     and (id = p_order or group_id = (select group_id from public.orders where id = p_order));
 $$;
 
 -- Pago aprobado por Mercado Pago → el pedido llega a la mamita (idempotente)
 create or replace function public.confirm_online_payment(p_order uuid, p_payment_id text, p_detail text)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_g uuid; v_id uuid;
+begin
+  select group_id into v_g from public.orders where id = p_order;
+  if not found then raise exception 'PEDIDO_NO_EXISTE'; end if;
+  -- un solo cobro confirma todos los pedidos del grupo
+  for v_id in select id from public.orders where id = p_order or (v_g is not null and group_id = v_g) order by created_at loop
+    perform public.confirm_online_payment_one(v_id, p_payment_id, p_detail);
+  end loop;
+end $$;
+
+create or replace function public.confirm_online_payment_one(p_order uuid, p_payment_id text, p_detail text)
 returns void language plpgsql security definer set search_path = public as $$
 declare v public.orders%rowtype;
 begin
@@ -622,6 +837,7 @@ begin
 end $$;
 
 revoke all on function public.register_payment_attempt(uuid,text,text) from public, anon, authenticated;
+revoke all on function public.confirm_online_payment_one(uuid,text,text) from public, anon, authenticated;
 revoke all on function public.confirm_online_payment(uuid,text,text)   from public, anon, authenticated;
 grant execute on function public.register_payment_attempt(uuid,text,text) to service_role;
 grant execute on function public.confirm_online_payment(uuid,text,text)   to service_role;
@@ -658,6 +874,13 @@ begin
 
   update public.orders set rating = v_r, review = left(coalesce(p->'mamita'->>'body',''), 400) where id = p_order;
   perform public.notify(v.mamita_id, 'Nueva calificación ★' || v_r, v.comensal_name || ' calificó su pedido ' || v.code || '.', p_order);
+  -- monedas: +5 por calificar; la mamita +10 si recibió 5 estrellas
+  insert into public.points_ledger(user_id, delta, reason, detail, order_id)
+  values (v.comensal_id, 5, 'resena', 'Calificaste el pedido ' || v.code, v.id) on conflict do nothing;
+  if v_r = 5 then
+    insert into public.points_ledger(user_id, delta, reason, detail, order_id)
+    values (v.mamita_id, 10, 'cinco_estrellas', '★5 en el pedido ' || v.code, v.id) on conflict do nothing;
+  end if;
 end $$;
 
 -- Comentario libre en un plato (máx. 10 por día por persona)
@@ -702,7 +925,226 @@ revoke all on function public.submit_reviews(uuid,jsonb)          from public, a
 revoke all on function public.add_comment(uuid,text)              from public, anon;
 revoke all on function public.reply_review(uuid,text)             from public, anon;
 revoke all on function public.expire_reservations()               from public, anon;
+-- =====================================================================
+-- MONEDAS MAMAYS: abonos, niveles, canjes y ranking del mes
+-- =====================================================================
+-- Nivel según pedidos entregados (comensal) o ventas entregadas (mamita): multiplica lo que ganas
+create or replace function public.nivel_de(p_role text, p_count int)
+returns jsonb language sql immutable as $$
+  select case when p_role = 'mamita' then
+    case when p_count >= 30 then jsonb_build_object('nombre','Mamita de oro','mult',1.5,'siguiente',null,'meta',null)
+         when p_count >= 10 then jsonb_build_object('nombre','Mamita estrella','mult',1.25,'siguiente','Mamita de oro','meta',30)
+         else jsonb_build_object('nombre','Mamita','mult',1,'siguiente','Mamita estrella','meta',10) end
+  else
+    case when p_count >= 15 then jsonb_build_object('nombre','Caserito de oro','mult',1.5,'siguiente',null,'meta',null)
+         when p_count >= 5  then jsonb_build_object('nombre','Caserito frecuente','mult',1.25,'siguiente','Caserito de oro','meta',15)
+         else jsonb_build_object('nombre','Caserito','mult',1,'siguiente','Caserito frecuente','meta',5) end
+  end
+$$;
+
+-- Al entregar un pedido: comensal gana 1 moneda por sol pagado; la mamita, 1 por sol vendido (× su nivel)
+create or replace function public.abonar_monedas_pedido(p_order uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare v public.orders%rowtype; c int; m numeric; pts int;
+begin
+  select * into v from public.orders where id = p_order and status = 'entregado';
+  if not found then return; end if;
+
+  select count(*) into c from public.orders where comensal_id = v.comensal_id and status = 'entregado' and id <> v.id;
+  m := (public.nivel_de('comensal', c)->>'mult')::numeric;
+  pts := greatest(1, floor(v.total * m))::int;
+  insert into public.points_ledger(user_id, delta, reason, detail, order_id)
+  values (v.comensal_id, pts, 'compra', 'Pedido ' || v.code, v.id) on conflict do nothing;
+  if found then
+    perform public.notify(v.comensal_id, '🪙 +' || pts || ' monedas Mamays', 'Ganaste ' || pts || ' monedas por tu pedido ' || v.code || '. ¡Canjéalas por premios!', v.id);
+  end if;
+  if c = 0 then
+    insert into public.points_ledger(user_id, delta, reason, detail, order_id)
+    values (v.comensal_id, 20, 'primera_compra', 'Bono de primera compra', v.id) on conflict do nothing;
+  end if;
+
+  select count(*) into c from public.orders where mamita_id = v.mamita_id and status = 'entregado' and id <> v.id;
+  m := (public.nivel_de('mamita', c)->>'mult')::numeric;
+  pts := greatest(1, floor(v.subtotal * m))::int;
+  insert into public.points_ledger(user_id, delta, reason, detail, order_id)
+  values (v.mamita_id, pts, 'venta', 'Venta ' || v.code, v.id) on conflict do nothing;
+  if found then
+    perform public.notify(v.mamita_id, '🪙 +' || pts || ' monedas Mamays', 'Ganaste ' || pts || ' monedas por tu venta ' || v.code || '.', v.id);
+  end if;
+end $$;
+revoke all on function public.abonar_monedas_pedido(uuid) from public, anon, authenticated;
+
+-- Mi saldo, mi nivel y lo ganado este mes
+create or replace function public.mis_monedas()
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare v_me public.profiles%rowtype; c int; v_mes timestamptz;
+begin
+  select * into v_me from public.profiles where id = auth.uid();
+  if not found then raise exception 'NO_AUTENTICADO'; end if;
+  select count(*) into c from public.orders
+   where status = 'entregado' and (case when v_me.role = 'mamita' then mamita_id else comensal_id end) = v_me.id;
+  v_mes := date_trunc('month', public.ahora() at time zone 'America/Lima') at time zone 'America/Lima';
+  return jsonb_build_object(
+    'saldo', coalesce((select sum(delta) from public.points_ledger where user_id = v_me.id), 0),
+    'ganadas_mes', coalesce((select sum(delta) from public.points_ledger where user_id = v_me.id and delta > 0 and created_at >= v_mes), 0),
+    'pedidos', c,
+    'nivel', public.nivel_de(v_me.role, c));
+end $$;
+
+-- Canjear un premio con monedas
+create or replace function public.canjear_premio(p_reward text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_me public.profiles%rowtype; r public.rewards%rowtype; v_saldo int; v_code text; v_row public.redemptions%rowtype;
+begin
+  select * into v_me from public.profiles where id = auth.uid();
+  if not found then raise exception 'NO_AUTENTICADO'; end if;
+  select * into r from public.rewards where id = p_reward and active;
+  if not found or r.role <> v_me.role then raise exception 'PREMIO_NO_EXISTE'; end if;
+  perform pg_advisory_xact_lock(hashtext('monedas:' || v_me.id::text));   -- evita canjes dobles simultáneos
+  select coalesce(sum(delta), 0) into v_saldo from public.points_ledger where user_id = v_me.id;
+  if v_saldo < r.cost then raise exception 'SALDO_INSUFICIENTE'; end if;
+  loop
+    v_code := 'MMY-' || upper(substr(md5(random()::text), 1, 6));
+    exit when not exists (select 1 from public.redemptions where code = v_code);
+  end loop;
+  insert into public.redemptions(user_id, reward_id, reward_name, kind, value, cost, code, status)
+  values (v_me.id, r.id, r.name, r.kind, r.value, r.cost, v_code, case when r.kind = 'obsequio' then 'pendiente_entrega' else 'activo' end)
+  returning * into v_row;
+  insert into public.points_ledger(user_id, delta, reason, detail) values (v_me.id, -r.cost, 'canje', 'Canje: ' || r.name);
+  perform public.notify(v_me.id, '🎁 Canjeaste: ' || r.name, case when r.kind = 'obsequio'
+    then 'Código ' || v_code || '. Te contactaremos para coordinar la entrega.'
+    else 'Código ' || v_code || '. Ya puedes usarlo en tu carrito.' end, null);
+  return to_jsonb(v_row);
+end $$;
+
+-- Ranking del mes: comensales con más compras / mamitas con más ventas (nombre + inicial del apellido)
+create or replace function public.ranking_mes(p_role text)
+returns table(pos int, nombre text, pedidos int, monedas int, es_yo boolean)
+language sql stable security definer set search_path = public as $$
+  with mes as (select date_trunc('month', public.ahora() at time zone 'America/Lima') at time zone 'America/Lima' as ini),
+  base as (
+    select pr.id, pr.full_name,
+           count(o.id)::int as pedidos,
+           coalesce(sum(case when p_role = 'mamita' then o.subtotal else o.total end), 0) as monto
+      from public.orders o
+      join public.profiles pr on pr.id = case when p_role = 'mamita' then o.mamita_id else o.comensal_id end
+     where o.status = 'entregado' and o.created_at >= (select ini from mes)
+     group by pr.id, pr.full_name
+  ),
+  rk as (
+    select row_number() over (order by pedidos desc, monto desc, full_name)::int as pos, *
+      from base
+  )
+  select rk.pos,
+         split_part(trim(full_name), ' ', 1) || coalesce(' ' || nullif(left(split_part(trim(full_name), ' ', 2), 1), '') || '.', ''),
+         rk.pedidos,
+         coalesce((select sum(delta) from public.points_ledger l, mes
+                    where l.user_id = rk.id and l.delta > 0 and l.reason in ('compra','venta') and l.created_at >= mes.ini), 0)::int,
+         rk.id = auth.uid()
+    from rk
+   where rk.pos <= 10 or rk.id = auth.uid()
+   order by rk.pos
+$$;
+
+-- Premio mensual: top 3 del mes anterior (+100, +60, +30). Programar con pg_cron el día 1 (ver README).
+create or replace function public.premiar_ranking_mes(p_mes date)
+returns int language plpgsql security definer set search_path = public as $$
+declare v_role text; r record; n int := 0; v_ini timestamptz; v_fin timestamptz;
+begin
+  v_ini := date_trunc('month', p_mes)::timestamp at time zone 'America/Lima';
+  v_fin := (date_trunc('month', p_mes) + interval '1 month')::timestamp at time zone 'America/Lima';
+  foreach v_role in array array['comensal','mamita'] loop
+    for r in
+      select u.id, row_number() over (order by count(*) desc, sum(case when v_role = 'mamita' then o.subtotal else o.total end) desc) as pos
+        from public.orders o join public.profiles u on u.id = case when v_role = 'mamita' then o.mamita_id else o.comensal_id end
+       where o.status = 'entregado' and o.created_at >= v_ini and o.created_at < v_fin
+       group by u.id order by pos limit 3
+    loop
+      insert into public.points_ledger(user_id, delta, reason, detail)
+      values (r.id, (array[100,60,30])[r.pos], 'ranking', 'Ranking ' || to_char(p_mes, 'YYYY-MM') || ' · puesto ' || r.pos)
+      on conflict do nothing;
+      if found then
+        n := n + 1;
+        perform public.notify(r.id, '🏆 ¡Puesto ' || r.pos || ' del mes!', 'Ganaste ' || (array[100,60,30])[r.pos] || ' monedas Mamays por el ranking de ' || to_char(p_mes, 'MM/YYYY') || '.', null);
+      end if;
+    end loop;
+  end loop;
+  return n;
+end $$;
+revoke all on function public.premiar_ranking_mes(date) from public, anon, authenticated;
+grant execute on function public.premiar_ranking_mes(date) to service_role;
+
+-- =====================================================================
+-- ADMINISTRADOR: comisión de la app y datos para el panel de ventas
+-- =====================================================================
+create table if not exists public.app_config (
+  id           int primary key default 1 check (id = 1),
+  comision_pct numeric(5,2) not null default 2 check (comision_pct >= 2 and comision_pct <= 30)
+);
+insert into public.app_config(id) values (1) on conflict (id) do nothing;
+alter table public.app_config enable row level security;
+drop policy if exists "config: todos la leen" on public.app_config;
+create policy "config: todos la leen" on public.app_config for select using (true);
+
+create or replace function public.es_admin()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+$$;
+
+create or replace function public.comision_pct()
+returns numeric language sql stable security definer set search_path = public as $$
+  select comision_pct from public.app_config where id = 1
+$$;
+
+-- Cambiar la comisión (solo admin; nunca menos de 2 %)
+create or replace function public.admin_set_comision(p_pct numeric)
+returns numeric language plpgsql security definer set search_path = public as $$
+begin
+  if not public.es_admin() then raise exception 'SOLO_ADMIN'; end if;
+  if p_pct is null or p_pct < 2 then raise exception 'COMISION_MINIMA'; end if;
+  if p_pct > 30 then raise exception 'COMISION_MAXIMA'; end if;
+  update public.app_config set comision_pct = round(p_pct, 2) where id = 1;
+  return round(p_pct, 2);
+end $$;
+
+-- Todos los pedidos del periodo (con platos, categoría y datos del comensal) para el panel. Solo admin.
+create or replace function public.admin_datos(p_desde timestamptz, p_hasta timestamptz)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare v_pct numeric := public.comision_pct();
+begin
+  if not public.es_admin() then raise exception 'SOLO_ADMIN'; end if;
+  return jsonb_build_object(
+    'comision_pct', v_pct,
+    'usuarios', jsonb_build_object(
+      'comensales', (select count(*) from public.profiles where role = 'comensal'),
+      'mamitas',    (select count(*) from public.profiles where role = 'mamita'),
+      'platos',     (select count(*) from public.dishes where not paused)),
+    'pedidos', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', o.id, 'code', o.code, 'created_at', o.created_at, 'status', o.status, 'mode', o.mode,
+        'payment_method', o.payment_method, 'subtotal', o.subtotal, 'delivery_cost', o.delivery_cost,
+        'discount', o.discount, 'total', o.total, 'guests', o.guests, 'rating', o.rating, 'group_id', o.group_id,
+        'comision', case when o.status = 'entregado' then coalesce(o.comision, round(o.subtotal * v_pct / 100, 2)) else 0 end,
+        'comensal_id', o.comensal_id, 'comensal_name', o.comensal_name, 'mamita_id', o.mamita_id, 'mamita_name', o.mamita_name,
+        'comensal_zone', c.zone, 'comensal_allergies', to_jsonb(c.allergies), 'comensal_desde', c.created_at,
+        'items', (select coalesce(jsonb_agg(jsonb_build_object('dish_id', i.dish_id, 'dish_name', i.dish_name, 'qty', i.qty,
+                    'unit_price', i.unit_price, 'extras_total', i.extras_total, 'category', coalesce(d.category, 'Otros'))), '[]'::jsonb)
+                  from public.order_items i left join public.dishes d on d.id = i.dish_id where i.order_id = o.id)
+      ) order by o.created_at)
+      from public.orders o left join public.profiles c on c.id = o.comensal_id
+      where o.created_at >= p_desde and o.created_at < p_hasta), '[]'::jsonb)
+  );
+end $$;
+
 grant execute on function public.place_order(jsonb)               to authenticated;
+grant execute on function public.es_admin()                       to authenticated;
+grant execute on function public.comision_pct()                   to anon, authenticated;
+grant execute on function public.admin_set_comision(numeric)      to authenticated;
+grant execute on function public.admin_datos(timestamptz,timestamptz) to authenticated;
+grant execute on function public.place_orders(jsonb)              to authenticated;
+grant execute on function public.mis_monedas()                    to authenticated;
+grant execute on function public.canjear_premio(text)             to authenticated;
+grant execute on function public.ranking_mes(text)                to authenticated;
 grant execute on function public.submit_voucher(uuid,text)        to authenticated;
 grant execute on function public.set_order_status(uuid,text,text) to authenticated;
 grant execute on function public.submit_reviews(uuid,jsonb)       to authenticated;

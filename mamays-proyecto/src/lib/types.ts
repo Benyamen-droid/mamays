@@ -1,4 +1,5 @@
-export type Role = 'comensal' | 'mamita'
+export type Role = 'comensal' | 'mamita' | 'admin'
+export const inicioDe = (r: Role) => (r === 'mamita' ? '/mamita' : r === 'admin' ? '/admin' : '/comensal')
 
 export type DeliveryMode = 'delivery' | 'recojo' | 'ambos'
 export type OrderMode = 'delivery' | 'recojo' | 'en_casa'
@@ -41,6 +42,9 @@ export interface Profile {
   yape_phone: string
   lat: number | null
   lng: number | null
+  /** ubicación exacta de la cocina (privada; solo se comparte en pedidos aceptados) */
+  home_lat: number | null
+  home_lng: number | null
   onboarded: boolean
 }
 
@@ -133,6 +137,12 @@ export interface Order {
   total: number
   delivery_address: string
   pickup_address: string
+  /** punto de entrega compartido por el comensal (delivery) */
+  delivery_lat: number | null
+  delivery_lng: number | null
+  /** punto exacto de recojo / hogar (se revela al aceptar) */
+  pickup_lat: number | null
+  pickup_lng: number | null
   receiver_name: string
   receiver_phone: string
   payer_name: string
@@ -144,6 +154,15 @@ export interface Order {
   reserved_until: string | null
   guests: number
   terms_accepted_at: string | null
+  /** cuándo se avisó “tu almuerzo ya salió” (una sola vez) */
+  aviso_salida_at: string | null
+  /** pedidos de varias mamitas hechos juntos (un solo pago) */
+  group_id: string | null
+  /** descuento por cupón de monedas Mamays (lo asume MAMAYS) */
+  discount: number
+  coupon_id: string | null
+  /** comisión de MAMAYS guardada al entregar (mínimo 2 %) */
+  comision?: number | null
   history: StatusEvent[]
   rating: number | null
   review: string
@@ -165,7 +184,35 @@ export interface CartLine {
   dish_id: string
   qty: number
   extras?: string[]
+  /** mamita del plato (el carrito puede tener platos de varias mamitas) */
+  mamita_id?: string
 }
+
+/** Pedido de varias mamitas: un grupo de platos por mamita, mismo pago y entrega */
+export interface PlaceOrdersInput extends Omit<PlaceOrderInput, 'mamita_id' | 'items'> {
+  groups: { mamita_id: string; items: CartLine[] }[]
+}
+
+/* ---------- Monedas Mamays ---------- */
+export interface Nivel { nombre: string; mult: number; siguiente: string | null; meta: number | null }
+export interface MisMonedas { saldo: number; ganadas_mes: number; pedidos: number; nivel: Nivel }
+export interface PointsEntry { id: string; delta: number; reason: string; detail: string; order_id: string | null; created_at: string }
+export interface Reward { id: string; role: Role; name: string; description: string; cost: number; kind: 'descuento' | 'delivery_gratis' | 'obsequio'; value: number; sort: number }
+export interface Redemption {
+  id: string; reward_id: string; reward_name: string; kind: Reward['kind']; value: number; cost: number; code: string
+  status: 'activo' | 'usado' | 'pendiente_entrega' | 'entregado'; order_id: string | null; created_at: string; used_at: string | null
+}
+/* ---------- Administrador ---------- */
+export interface AdminItem { dish_id: string; dish_name: string; qty: number; unit_price: number; extras_total: number; category: string }
+export interface AdminPedido {
+  id: string; code: string; created_at: string; status: OrderStatus; mode: OrderMode; payment_method: PaymentMethod
+  subtotal: number; delivery_cost: number; discount: number; total: number; comision: number; guests: number; rating: number | null
+  group_id: string | null; comensal_id: string; comensal_name: string; mamita_id: string; mamita_name: string
+  comensal_zone: string | null; comensal_allergies: string[]; comensal_desde: string | null; items: AdminItem[]
+}
+export interface AdminDatos { comision_pct: number; usuarios: { comensales: number; mamitas: number; platos: number }; pedidos: AdminPedido[] }
+
+export interface RankRow { pos: number; nombre: string; pedidos: number; monedas: number; es_yo: boolean }
 
 export interface PlaceOrderInput {
   mamita_id: string
@@ -178,6 +225,10 @@ export interface PlaceOrderInput {
   payer_name: string
   notes: string
   guests?: number
+  delivery_lat?: number | null
+  delivery_lng?: number | null
+  /** id del cupón (canje de monedas) */
+  coupon?: string | null
   terms_accepted?: boolean
   terms_version?: string
 }

@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  BookOpen, Camera, ChartColumn, ChevronRight, DoorOpen, Eye, Heart, Navigation, Pause, Pencil, Phone, Play, Plus, ShoppingBag, Store, Target, Trash2, Truck, Users,
+  BookOpen, Camera, ChartColumn, Check, ChevronRight, LocateFixed, DoorOpen, Eye, Heart, Navigation, Pause, Pencil, Phone, Play, Plus, ShoppingBag, Store, Target, Trash2, Truck, Users,
 } from 'lucide-react'
 import { api, mensajeError } from '../../data'
 import { useAuth, useToast } from '../../context/AppContext'
 import { ACTIVE_STATUSES, ALERGENOS, CATEGORIAS, ETIQUETAS, HORARIOS, ZONAS, nextActionLabel, nextStatus } from '../../lib/constants'
 import type { DeliveryMode, Dish, DishView, Extra, Order, Review } from '../../lib/types'
 import { celularValido, comprimirImagen, fechaHora, primerNombre, soles } from '../../lib/format'
-import { openMapsDirections } from '../../lib/maps'
+import { RouteCard } from '../../components/RouteCard'
+import { getMyLocation } from '../../lib/route'
 import { ReviewItem } from '../../components/reviews'
 import { PrimerosPasos } from './MamitaHelp'
 import { OrderItems, OrderTotals, StatusBadge, VoucherImage } from '../../components/orders'
@@ -244,7 +245,7 @@ export function DishForm() {
         <ExtrasEditor value={f.extras ?? []} onChange={(v) => set('extras', v)} error={errs.extras} />
 
         <label className="flex items-start gap-3 rounded-[20px] border border-borde bg-white p-4">
-          <input type="checkbox" className="mt-1 h-5 w-5 accent-[#A3173B]" checked={!!f.dine_in} onChange={(e) => set('dine_in', e.target.checked)} />
+          <input type="checkbox" className="mt-1 h-5 w-5 accent-[#D33434]" checked={!!f.dine_in} onChange={(e) => set('dine_in', e.target.checked)} />
           <span className="text-sm"><b className="flex items-center gap-1.5"><DoorOpen size={16} className="text-guinda" /> Recibo comensales en mi hogar</b>
             <span className="text-gris">Podrán venir a comer a tu casa. Antes deben aceptar normas de seguridad y convivencia, y tu dirección se comparte solo cuando aceptas.</span></span>
         </label>
@@ -315,7 +316,7 @@ function ExtrasEditor({ value, onChange, error }: { value: Extra[]; onChange: (v
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {sugerencias.filter((sg) => !value.some((v) => v.name === sg)).slice(0, 6).map((sg) => (
-          <button key={sg} type="button" onClick={() => setName(sg)} className="rounded-full border border-dashed border-[#d9b3bf] px-2.5 py-1 text-[11.5px] font-semibold text-guinda">+ {sg}</button>
+          <button key={sg} type="button" onClick={() => setName(sg)} className="rounded-full border border-dashed border-[#F2B9B5] px-2.5 py-1 text-[11.5px] font-semibold text-guinda">+ {sg}</button>
         ))}
       </div>
       {error && <p className="mt-2 text-xs font-semibold text-[#b42323]">{error}</p>}
@@ -331,6 +332,8 @@ export function MamitaOrders() {
   const [reject, setReject] = useState<Order | null>(null)
   const [reason, setReason] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [rutaId, setRutaId] = useState<string | null>(null)
+  const { profile } = useAuth()
   const [params] = useSearchParams()
   const focus = params.get('o')
   const { toast } = useToast()
@@ -390,9 +393,17 @@ export function MamitaOrders() {
                     {o.mode === 'en_casa' && <span><b>Comerá en tu hogar · {o.guests} {o.guests === 1 ? 'persona' : 'personas'}</b>
                       {o.terms_accepted_at && <span className="block text-xs text-ok">✓ Aceptó las normas de seguridad y convivencia</span>}</span>}</div>
                   {o.mode === 'delivery' && ACTIVE_STATUSES.includes(o.status) && (
-                    <button onClick={() => openMapsDirections(o.delivery_address, 'driving')} className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-bold text-guinda shadow-sm">
-                      <Navigation size={13} /> Ruta en Google Maps
-                    </button>
+                    rutaId === o.id ? (
+                      <RouteCard className="mt-2" title={`¿A cuánto está ${primerNombre(o.receiver_name)}?`} defaultMode="car"
+                        to={o.delivery_lat != null && o.delivery_lng != null ? { lat: o.delivery_lat, lng: o.delivery_lng } : null}
+                        toLabel={o.receiver_name} googleDest={o.delivery_address}
+                        from={profile?.home_lat != null && profile.home_lng != null ? { lat: profile.home_lat, lng: profile.home_lng } : undefined}
+                        fromLabel="Tu cocina" />
+                    ) : (
+                      <button onClick={() => setRutaId(o.id)} className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-bold text-guinda shadow-sm">
+                        <Navigation size={13} /> {o.delivery_lat != null ? 'Ver ruta y tiempo de llegada' : 'Ruta en Google Maps'}
+                      </button>
+                    )
                   )}
                   <div className="flex gap-2"><Phone size={16} className="mt-0.5 text-guinda" /> Recibe {o.receiver_name} · <a className="font-semibold text-guinda" href={`tel:${o.receiver_phone}`}>{o.receiver_phone}</a></div>
                   {o.payer_name && o.payer_name !== o.receiver_name && <div className="flex gap-2"><Users size={16} className="mt-0.5 text-guinda" /> Paga {o.payer_name}</div>}
@@ -447,6 +458,12 @@ export function MamitaSales() {
   const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(now); d.setDate(d.getDate() - (6 - i)); return limaDay(d) })
   const perDay = days.map((day) => done.filter((o) => limaDay(o.created_at) === day).reduce((a, o) => a + o.total, 0))
   const max = Math.max(1, ...perDay)
+  const [pct, setPct] = useState(2)
+  useEffect(() => { api.comisionPct().then(setPct).catch(() => {}) }, [])
+  const ult30 = done.filter((o) => (now.getTime() - new Date(o.created_at).getTime()) / 86400000 < 30)
+  const platos30 = ult30.reduce((a, o) => a + o.subtotal, 0)
+  const comision30 = ult30.reduce((a, o) => a + (o.comision ?? Math.round(o.subtotal * pct) / 100), 0)
+  const delivery30 = ult30.reduce((a, o) => a + o.delivery_cost, 0)
   const top = Object.entries(done.flatMap((o) => o.items).reduce<Record<string, number>>((acc, i) => ({ ...acc, [i.dish_name]: (acc[i.dish_name] ?? 0) + i.qty }), {}))
     .sort((a, b) => b[1] - a[1]).slice(0, 3)
 
@@ -464,10 +481,20 @@ export function MamitaSales() {
             ))}
           </div>
           <Card className="mt-4">
+            <div className="text-sm font-bold">Últimos 30 días: lo que te queda</div>
+            <div className="mt-2 space-y-1 text-[13px]">
+              <div className="flex justify-between"><span className="text-gris">Platos vendidos</span><span>{soles(platos30)}</span></div>
+              <div className="flex justify-between"><span className="text-gris">Comisión MAMAYS</span><span>− {soles(comision30)}</span></div>
+              <div className="flex justify-between"><span className="text-gris">Delivery (es tuyo)</span><span>+ {soles(delivery30)}</span></div>
+              <div className="flex justify-between border-t border-borde pt-1 font-extrabold"><span>Recibes</span><span className="text-guinda" data-testid="recibe-mamita">{soles(platos30 - comision30 + delivery30)}</span></div>
+            </div>
+            <p className="mt-1.5 text-[11.5px] text-gris">La comisión actual de MAMAYS es <b>{pct} %</b> de los platos (cada pedido conserva la de su fecha). Los descuentos con monedas los paga MAMAYS: no se restan de lo tuyo.</p>
+          </Card>
+          <Card className="mt-4">
             <div className="mb-3 text-sm font-bold">Últimos 7 días</div>
             <div className="flex h-36 items-end gap-2">
               {perDay.map((v, i) => (
-                <div key={i} className="flex flex-1 flex-col items-center gap-1">
+                <div key={i} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
                   <span className="text-[10px] font-semibold text-gris">{v ? Math.round(v) : ''}</span>
                   <div className="w-full rounded-t-lg bg-guinda/85" style={{ height: `${(v / max) * 100}%`, minHeight: v ? 4 : 2, opacity: v ? 1 : 0.15 }} />
                   <span className="text-[10px] text-gris">{new Date(days[i] + 'T12:00').toLocaleDateString('es-PE', { weekday: 'narrow' })}</span>
@@ -508,6 +535,7 @@ export function MamitaProfile() {
   const [rating, setRating] = useState<{ r: number | null; c: number; n: number }>({ r: null, c: 0, n: 0 })
   const [busy, setBusy] = useState(false)
   const [photoBusy, setPhotoBusy] = useState(false)
+  const [locBusy, setLocBusy] = useState(false)
   const [reviews, setReviews] = useState<Review[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   useEffect(() => { api.getMamita(profile!.id).then((m) => m && setRating({ r: m.rating, c: m.rating_count, n: m.dish_count })).catch(() => {}) }, [profile])
@@ -539,7 +567,7 @@ export function MamitaProfile() {
   const p = profile!
   return (
     <Screen className="!px-0 !pt-0">
-      <div className="relative h-36 overflow-hidden rounded-b-[32px] bg-gradient-to-br from-guinda to-[#d0345d]">
+      <div className="relative h-36 overflow-hidden rounded-b-[32px] bg-gradient-to-br from-guinda to-[#FE504F]">
         <div className="absolute -right-4 top-4 h-28 w-28 rounded-full border-[16px] border-white/15" />
       </div>
       <div className="px-5">
@@ -603,6 +631,22 @@ export function MamitaProfile() {
               <Field label="Distrito o zona"><select className="field-input" value={f.zone} onChange={(e) => set('zone', e.target.value)}>{ZONAS.map((z) => <option key={z}>{z}</option>)}</select></Field>
             </div>
             <Field label="Dirección de referencia (privada)" hint="Solo la recibe el comensal cuando aceptas un pedido para recojo."><input className="field-input" value={f.address} onChange={(e) => set('address', e.target.value)} /></Field>
+            <div className="rounded-[20px] border border-borde bg-white p-4">
+              <div className="flex items-center gap-2 text-sm font-bold"><LocateFixed size={17} className="text-guinda" /> Ubicación exacta de tu cocina <span className="text-xs font-normal text-gris">(privada)</span></div>
+              <p className="mt-1 text-xs text-gris">Márcala estando en tu cocina. Así el comensal ve la ruta y el tiempo exacto para llegar, solo cuando aceptas su pedido de recojo o para comer en tu hogar.</p>
+              {f.home_lat != null ? (
+                <div className="mt-2 flex items-center gap-2 text-[13px] text-ok"><Check size={15} /> <span className="flex-1">Ubicación guardada</span>
+                  <button type="button" onClick={() => setF((x) => ({ ...x, home_lat: null, home_lng: null }))} className="text-xs font-bold text-gris underline">Quitar</button></div>
+              ) : null}
+              <button type="button" disabled={locBusy} onClick={async () => {
+                setLocBusy(true)
+                try { const p = await getMyLocation(); setF((x) => ({ ...x, home_lat: Number(p.lat.toFixed(6)), home_lng: Number(p.lng.toFixed(6)) })); toast('Ubicación marcada. Toca “Guardar cambios”.', 'info') }
+                catch (e) { toast(mensajeError(e), 'error') } finally { setLocBusy(false) }
+              }} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-crema py-2.5 text-sm font-bold text-cafe">
+                {locBusy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-guinda border-t-transparent" /> : <LocateFixed size={16} className="text-guinda" />}
+                {f.home_lat != null ? 'Volver a marcar con mi ubicación actual' : 'Marcar con mi ubicación actual'}
+              </button>
+            </div>
             <Field label="Zona que deseas mostrar públicamente"><input className="field-input" value={f.public_zone_label} onChange={(e) => set('public_zone_label', e.target.value)} /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Titular Yape"><input className="field-input" value={f.yape_name} onChange={(e) => set('yape_name', e.target.value)} /></Field>
@@ -612,7 +656,7 @@ export function MamitaProfile() {
             <Field label="Tu cocina y ambiente"><textarea className="field-input min-h-24" value={f.home_description} onChange={(e) => set('home_description', e.target.value)} /></Field>
             <Field label="Fotos de tu cocina"><ImagePicker images={f.home_photos} onChange={(v) => set('home_photos', v)} kind="home" /></Field>
             <label className="flex items-start gap-3 text-sm">
-              <input type="checkbox" className="mt-1 h-4 w-4 accent-[#A3173B]" checked={f.show_home} onChange={(e) => set('show_home', e.target.checked)} />
+              <input type="checkbox" className="mt-1 h-4 w-4 accent-[#D33434]" checked={f.show_home} onChange={(e) => set('show_home', e.target.checked)} />
               Deseo mostrar la descripción y fotos de mi hogar públicamente
             </label>
             <Button onClick={save} loading={busy}>Guardar cambios</Button>

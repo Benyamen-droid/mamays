@@ -18,9 +18,10 @@ export function mapsSearchUrl(target: { lat?: number | null; lng?: number | null
 }
 
 /** Cómo llegar desde la ubicación actual */
-export function mapsDirectionsUrl(destination: string, mode: 'walking' | 'driving' | 'transit' = 'walking') {
-  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(withCity(destination))}&travelmode=${mode}`
+export function mapsDirectionsUrl(destination: string | { lat: number; lng: number }, mode: 'walking' | 'driving' | 'transit' = 'walking') {
+  const dest = typeof destination === 'string' ? withCity(destination) : `${destination.lat},${destination.lng}`
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}&travelmode=${mode}`
 }
 
 export const openMapsSearch = (t: Parameters<typeof mapsSearchUrl>[0]) => openExternal(mapsSearchUrl(t))
-export const openMapsDirections = (dest: string, mode?: 'walking' | 'driving' | 'transit') => openExternal(mapsDirectionsUrl(dest, mode))
+export const openMapsDirections = (dest: string | { lat: number; lng: number }, mode?: 'walking' | 'driving' | 'transit') => openExternal(mapsDirectionsUrl(dest, mode))

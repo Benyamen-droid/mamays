@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronRight, DoorOpen, MapPin, Navigation, Phone, ReceiptText, Store, Truck, Users } from 'lucide-react'
+import { ChevronRight, DoorOpen, MapPin, Phone, ReceiptText, Store, Truck, Users } from 'lucide-react'
 import { api, mensajeError } from '../../data'
 import { useAuth, useToast } from '../../context/AppContext'
 import { ACTIVE_STATUSES, ALERGENOS, PAYMENT_LABEL, STATUS_LABEL, ZONAS } from '../../lib/constants'
 import type { Order } from '../../lib/types'
 import { celularValido, fechaHora, soles } from '../../lib/format'
-import { OrderItems, OrderTimeline, OrderTotals, StatusBadge } from '../../components/orders'
+import { AvisoSalida, OrderItems, OrderTimeline, OrderTotals, StatusBadge } from '../../components/orders'
 import { CREDITS, photoPage } from '../../data/realPhotos'
 import { Avatar, BackButton, Button, Card, CheckGrid, DishPhoto, EmptyState, Eyebrow, Field, ImagePicker, Loading, PageTitle, Screen, Sheet } from '../../components/ui'
 import { StarsInput, StarsRow } from '../../components/reviews'
-import { openMapsDirections } from '../../lib/maps'
+import { PerfilResumen } from './PerfilResumen'
+import { RouteCard } from '../../components/RouteCard'
+import type { LatLng } from '../../lib/route'
 
 /* ===================== MIS PEDIDOS ===================== */
 export function MyOrders() {
@@ -39,13 +41,14 @@ export function MyOrders() {
 
 function OrderRow({ o, highlight }: { o: Order; highlight?: boolean }) {
   return (
-    <Link to={`/comensal/pedidos/${o.id}`} className={`block rounded-[20px] border p-4 ${highlight ? 'border-guinda/40 bg-white shadow-[0_8px_24px_-14px_rgb(163_23_59/0.6)]' : 'border-borde bg-white'}`}>
+    <Link to={`/comensal/pedidos/${o.id}`} className={`block rounded-[20px] border p-4 ${highlight ? 'border-guinda/40 bg-white shadow-[0_8px_24px_-14px_rgb(211_52_52/0.6)]' : 'border-borde bg-white'}`}>
       <div className="flex items-center justify-between">
         <span className="font-mono text-xs font-bold text-gris">{o.code}</span>
         <StatusBadge s={o.status} />
       </div>
       <div className="mt-2 font-bold">{o.items.map((i) => `${i.qty} × ${i.dish_name}`).join(', ')}</div>
       <div className="mt-0.5 text-xs text-gris">{o.mamita_name} · {fechaHora(o.created_at)}</div>
+      <AvisoSalida o={o} compacto />
       <div className="mt-2 flex items-center justify-between">
         <span className="text-sm font-semibold">{highlight ? STATUS_LABEL[o.status] : soles(o.total)}</span>
         <ChevronRight size={18} className="text-gris" />
@@ -67,6 +70,13 @@ export function OrderDetail() {
   const [askCancel, setAskCancel] = useState(false)
   const load = useCallback(() => api.getOrder(id!).then(setO).catch(() => setO(null)), [id])
   useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t) }, [load])
+  // antes de que acepte: zona aproximada de la mamita para estimar la distancia
+  const [mamitaPos, setMamitaPos] = useState<LatLng | null>(null)
+  const mamitaId = o?.mamita_id
+  useEffect(() => {
+    if (!mamitaId) return
+    api.getMamita(mamitaId).then((m) => m && m.lat != null && m.lng != null && setMamitaPos({ lat: m.lat, lng: m.lng })).catch(() => {})
+  }, [mamitaId])
 
   if (o === undefined) return <Screen><Loading /></Screen>
   if (!o) return <Screen><EmptyState icon={<ReceiptText />} title="Pedido no encontrado" text="" /></Screen>
@@ -107,7 +117,19 @@ export function OrderDetail() {
         </div>
       )}
 
+      <AvisoSalida o={o} />
       <Card className="mt-5"><OrderTimeline order={o} /></Card>
+
+      {o.mode !== 'delivery' && ACTIVE_STATUSES.includes(o.status) && (
+        o.pickup_lat != null && o.pickup_lng != null ? (
+          <RouteCard className="mt-4" title={o.mode === 'en_casa' ? 'Cómo llegar al hogar de la mamita' : 'Cómo llegar a recoger tu pedido'}
+            to={{ lat: o.pickup_lat, lng: o.pickup_lng }} toLabel={`Cocina de ${o.mamita_name}`} googleDest={o.pickup_address} />
+        ) : o.pickup_address ? (
+          <RouteCard className="mt-4" title="Cómo llegar" to={null} toLabel={o.mamita_name} googleDest={o.pickup_address} />
+        ) : mamitaPos ? (
+          <RouteCard className="mt-4" title={`¿A cuánto está ${o.mamita_name}?`} to={mamitaPos} toLabel={`Zona de ${o.mamita_name}`} approx />
+        ) : null
+      )}
 
       <Card className="mt-4">
         <OrderItems o={o} />
@@ -124,11 +146,7 @@ export function OrderDetail() {
               </span>
             </div>
           )}
-          {o.pickup_address && ACTIVE_STATUSES.includes(o.status) && (
-            <button onClick={() => openMapsDirections(o.pickup_address)} className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl bg-guinda py-2.5 text-sm font-bold text-white">
-              <Navigation size={16} /> Cómo llegar en Google Maps
-            </button>
-          )}
+
           {o.receiver_name && o.receiver_name !== o.comensal_name && (
             <div className="flex gap-2"><Users size={16} className="mt-0.5 shrink-0 text-guinda" /> Lo recibe {o.receiver_name} · {o.receiver_phone}</div>
           )}
@@ -195,6 +213,7 @@ export function ComensalProfile() {
   const [f, setF] = useState(() => ({ ...profile!, allergies: profile!.allergies.length ? profile!.allergies : ['Ninguna'] }))
   const [busy, setBusy] = useState(false)
   const [credits, setCredits] = useState(false)
+  const [tab, setTab] = useState<'resumen' | 'datos'>('resumen')
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
 
   async function save() {
@@ -208,10 +227,17 @@ export function ComensalProfile() {
 
   return (
     <Screen>
-      <div className="mb-5 flex items-center gap-4">
+      <div className="mb-4 flex items-center gap-4">
         <Avatar name={f.full_name} url={f.avatar_url} size={72} />
         <div><div className="eyebrow">Mi perfil</div><h1 className="font-serif text-[26px] font-bold leading-tight">{profile!.full_name}</h1><p className="text-sm text-gris">{profile!.email}</p></div>
       </div>
+      <div className="mb-4 grid grid-cols-2 gap-1 rounded-2xl bg-crema-200 p-1" role="tablist">
+        {([['resumen', 'Sobre mí'], ['datos', 'Mis datos']] as const).map(([k, l]) => (
+          <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
+            className={`rounded-xl py-2 text-sm font-bold ${tab === k ? 'bg-white text-guinda shadow-sm' : 'text-cafe'}`}>{l}</button>
+        ))}
+      </div>
+      {tab === 'resumen' ? <PerfilResumen profile={profile!} /> : (
       <div className="space-y-4">
         <Field label="Foto de perfil" optional><ImagePicker images={f.avatar_url ? [f.avatar_url] : []} onChange={(v) => set('avatar_url', v[0] ?? '')} max={1} kind="avatar" label="Subir foto" /></Field>
         <Field label="Nombres y apellidos"><input className="field-input" value={f.full_name} onChange={(e) => set('full_name', e.target.value)} /></Field>
@@ -243,6 +269,7 @@ export function ComensalProfile() {
           </ul>
         </Sheet>
       </div>
+      )}
     </Screen>
   )
 }

@@ -1,20 +1,24 @@
-# MAMAYS 2.3 · comida casera hecha con amor
+# MAMAYS 2.6 · comida casera hecha con amor
 
 App móvil que conecta **comensales de Puno** con **mamitas** que cocinan en casa.
 Hecha con React + Vite + Tailwind, **Supabase** como backend y **Capacitor** para generar el APK de Android.
 
-> **Sin configurar nada funciona en MODO DEMO:** trae 4 mamitas y 10 platos de ejemplo, y todo se guarda solo en ese teléfono o navegador.
-> Cuentas de prueba (contraseña `demo123`): `comensal@demo.pe`, `juana@demo.pe`, `teodora@demo.pe`, `marta@demo.pe`, `elena@demo.pe`.
+> **Sin configurar nada funciona en MODO DEMO:** trae 4 mamitas y 10 platos de ejemplo, y todo se guarda **solo en ese teléfono**.
+> Por eso, en modo demo, lo que publica una mamita en su celular **no** lo ve un comensal en otro celular.
+> Para que todo se comparta y quede guardado en la nube, haz el **Paso 0 (Supabase)**.
+> Cuentas de prueba del modo demo (contraseña `demo123`): `comensal@demo.pe`, `juana@demo.pe`, `teodora@demo.pe`, `marta@demo.pe`, `elena@demo.pe` y el administrador `admin@demo.pe` (entra por “Acceso para el administrador”). Ya no se muestran dentro de la app.
 
 ---
 
-## Paso 0 · Conectar Supabase (para pedidos reales entre celulares)
+## Paso 0 · Conectar Supabase (para que todo se guarde y se comparta entre celulares)
+
+Con Supabase, **todo** queda guardado en la nube y lo ven todos los celulares al instante: los platos que publica una mamita, los pedidos, los comentarios y respuestas, las calificaciones, las monedas y los canjes.
 
 1. Crea una cuenta gratis en **supabase.com** → **New project** (región: *South America (São Paulo)*).
 2. Ve a **SQL Editor → New query**, pega todo el contenido de `supabase/schema.sql` y pulsa **Run**. Crea las tablas, la seguridad (RLS), las funciones de pedidos y los espacios para fotos.
 3. *(Recomendado para pruebas)* **Authentication → Sign In / Providers → Email**: desactiva **Confirm email**, así las cuentas nuevas entran de inmediato. Si lo dejas activo, la app muestra “Revisa tu correo”.
 4. **Project Settings → API**: copia la **Project URL** y la **anon public key**.
-5. Ábrelas en `public/config.js`:
+5. Pégalas en `public/config.js`. Desde GitHub: entra a `mamays-proyecto/public/config.js` → ícono del **lápiz** (Edit) → pega los dos valores → **Commit changes**. GitHub compila un APK nuevo que ya usa la nube:
 
 ```js
 window.MAMAYS_CONFIG = {
@@ -24,6 +28,22 @@ window.MAMAYS_CONFIG = {
 ```
 
 > La *anon key* es pública por diseño: la protegen las políticas RLS. **Nunca** pongas ahí la *service_role key*.
+
+6. **Crear el administrador:** regístrate en la app como comensal con tu correo y luego, en el SQL Editor, ejecuta:
+
+```sql
+update public.profiles set role = 'admin' where email = 'tu-correo@ejemplo.com';
+```
+
+Entra con “Acceso para el administrador” (abajo en la pantalla de bienvenida). Nadie puede hacerse administrador desde la app.
+
+7. *(Opcional)* **Premio mensual del ranking automático:** en el SQL Editor ejecuta una vez:
+
+```sql
+create extension if not exists pg_cron;
+select cron.schedule('mamays-premio-ranking', '5 5 1 * *',   -- día 1, 00:05 hora de Lima
+  $$select public.premiar_ranking_mes(((now() at time zone 'America/Lima') - interval '1 month')::date)$$);
+```
 
 ---
 
@@ -66,7 +86,7 @@ En el **modo demo**: Yape acepta cualquier celular y código (`000000` simula un
 4. Cuando aparezca ✅, ve a **Releases** (columna derecha del repositorio) → descarga **MAMAYS.apk** desde el celular.
 5. Ábrelo en Android. Si te lo bloquea, permite **“Instalar apps desconocidas”** para tu navegador o tu gestor de archivos.
 
-Cada vez que subas un cambio, GitHub genera un APK nuevo (versión `2.3.<número de compilación>`).
+Cada vez que subas un cambio, GitHub genera un APK nuevo (versión `2.6.<número de compilación>`).
 
 > **Firma fija de pruebas:** desde la 2.3 todos los APK se firman con la misma llave (`resources/signing/mamays-pruebas.keystore`), así que **cada versión nueva se instala encima de la anterior sin desinstalar**.
 > Solo la primera vez que pases de la 2.2 a la 2.3 tienes que desinstalar la versión vieja.
@@ -98,6 +118,45 @@ En el celular: abre el enlace en **Chrome → ⋮ → Instalar app** (o *Agregar
 Para cambiar Supabase sin recompilar, edita `config.js` dentro de la carpeta publicada.
 
 ---
+
+## Novedades 2.6
+
+| Pedido | Cómo quedó |
+|---|---|
+| **Colores del logo** | Toda la app usa el **coral de Mamays** (#FE504F en fondos y portada; #D33434 en botones y textos, con contraste AA sobre blanco). El encabezado muestra el logo, y el ícono de Android y de la app web es el plato del logo sobre coral. |
+| **Sin horario de cierre** | Se quitó la restricción de las 10:00 a. m. (en la app, el servidor y el pago): se puede pedir a cualquier hora. El aviso de salida “llegará entre 12:30 y 1:30 p. m.” se mantiene. |
+| **Perfil del comensal: “Sobre mí”** | Descripción automática a partir de sus pedidos: plato favorito, tipo de comida que más pide, horario, cómo recibe, cómo paga, mamita favorita y alergias. Además: pedidos recibidos, total gastado, gasto promedio, calificación promedio, top 3 de platos, gustos por categoría, alergias (y cuántos platos de hoy las tienen) e historial de compras. |
+| **Administrador** | Panel de ventas: **cuánto recibe MAMAYS** (comisión configurable, **mínimo 2 %**, guardada en cada pedido), ventas por día con los **3 días más altos y más bajos**, por día de la semana, por **hora** y franja, **tipos de platos** y top platos, **comensales que más piden** y **tipos de comensales** (por frecuencia, horario, gusto, modalidad, alergias y zona), ventas y comisión por **mamita**, medios de pago y modalidades, hallazgos en palabras simples y descarga en **CSV** (Excel). Periodos de 7, 30, 90 días o 1 año. |
+| **Mamitas** | En “Mis ventas” ven la comisión de MAMAYS y **cuánto reciben**. |
+
+## Novedades 2.5
+
+| Pedido | Cómo quedó |
+|---|---|
+| **Portada** | Al abrir la app aparece el logo de **Mamays** (“El toque de casa fuera de casa”) unos segundos y luego se elige **Soy comensal / Soy mamita**. El splash nativo de Android también usa el logo. |
+| ~~**1 · Cierre a las 10:00 a. m.**~~ *(quitado en 2.6)* | Antes de las 10:00 se pide normal; desde las 10:00 (hora de **Lima**, tomada del **servidor**) no se confirma ningún pedido: *“Pedidos cerrados. Vuelve mañana antes de las 10:00 a. m.”* Bloqueado en el catálogo, el detalle, el carrito y el pago. Si el carrito estaba lleno y pasan las 10:00, al confirmar se rechaza en el servidor. |
+| **3 · Aviso de salida** | Al marcar **“Salió para delivery”** (estado `en_camino`, sin estados nuevos) el comensal recibe: *“Tu almuerzo de [mamita] ya salió. Llegará entre 12:30 y 1:30 p. m.”*. Se envía **una sola vez**, se suma a los avisos que ya existían y queda visible en **Mis pedidos**, el detalle y el inicio. |
+| **6 · Monedas Mamays** | Comensal: 1 moneda por S/ 1 pagado, +20 primera compra, +5 por calificar. Mamita: 1 por S/ 1 vendido, +10 por cada ★5. **Niveles** que multiplican (×1,25 y ×1,5), **ranking del mes** (top 3: +100, +60, +30) y **canje** por descuentos, delivery gratis u obsequios. Los cupones se usan en el carrito y los valida el servidor. |
+| **7 · Varios platos a la vez** | Botón **+** en cada plato del menú (sin entrar uno por uno), barra **“Ver carrito”** y carrito con platos de **varias mamitas**: se crea un pedido por cocina, **todo o nada**, con **un solo pago** (Yape o tarjeta). |
+| **Guardar interacciones** | En modo demo los datos ya **no se borran** al actualizar la app (se migran). Para que lo publicado por una mamita lo vea otro comensal en otro celular: **Paso 0 (Supabase)**. |
+
+> **¿Ya tenías Supabase?** Vuelve a ejecutar `supabase/schema.sql` completo: agrega el cierre, el grupo de pedidos, los cupones y las monedas sin borrar datos.
+
+## Novedades 2.4 · Ruta y tiempo de llegada
+
+| Dónde | Qué ve |
+|---|---|
+| **Menú del día** | Botón **“Cerca de mí”**: ordena los platos del más cercano al más lejano y cada tarjeta muestra la distancia y los minutos a pie. |
+| **Plato y perfil de la mamita** | Tarjeta **“¿A cuánto está?”**: tiempo y distancia **caminando** y en **mototaxi o auto**, la ruta dibujada en el mapa y el botón **“Ir con Google Maps”**. Antes de un pedido, solo hasta la **zona** de la mamita. |
+| **Seguimiento (recojo / comer en el hogar)** | Cuando la mamita acepta, la ruta va al **punto exacto de su cocina**. |
+| **Carrito (delivery)** | **“Compartir mi ubicación para el delivery”** (opcional): la mamita recibe el punto exacto. |
+| **Pedidos de la mamita** | **“Ver ruta y tiempo de llegada”** al domicilio del comensal, desde su cocina. |
+| **Perfil de la mamita** | **“Ubicación exacta de tu cocina (privada)”**: se marca con el GPS estando en la cocina. |
+
+- Las rutas se calculan por calles con **OpenStreetMap (OSRM)**, sin API key y gratis. Para Puno se ajustan: a pie ×1,15 por la altura; en auto ×1,3 + 2 min por el tráfico y la espera del mototaxi.
+- Si no hay conexión con el servidor de rutas, la app estima el tiempo en línea recta y lo avisa. **Google Maps** siempre da el tráfico en vivo.
+- **Privacidad:** la ubicación del comensal no se guarda (salvo que la comparta para un delivery). La ubicación exacta de la mamita solo llega al comensal **cuando ella acepta** su pedido.
+- El APK pide el permiso de **Ubicación** la primera vez que tocas “Usar mi ubicación”.
 
 ## Novedades 2.3 (Sprint 4 · Producción)
 
@@ -161,6 +220,13 @@ src/components/Dish3D.tsx   ← visor 3D de platos (three.js)
 src/components/reviews.tsx  ← estrellas, comentarios y respuestas
 src/pages/mamita/MamitaHelp.tsx ← bienvenida y guía de uso para mamás
 src/lib/maps.ts             ← enlaces a Google Maps
+src/lib/route.ts            ← GPS, ruta por calles (OSRM) y tiempo estimado
+src/components/RouteCard.tsx ← tarjeta “¿A cuánto está?” con mapa
+src/pages/Monedas.tsx       ← monedas, niveles, premios y ranking
+src/components/Brand.tsx    ← logo de Mamays (vectorizado)
+src/pages/admin/AdminPanel.tsx ← panel de ventas del administrador
+src/lib/analitica.ts        ← cálculos del panel (ventas, comisión, tipos de comensales…)
+src/pages/comensal/PerfilResumen.tsx ← “Sobre mí” del comensal
 supabase/functions/pagar/   ← función del servidor que cobra con Mercado Pago
 src/pages/auth|comensal|mamita
 src/components/             ← UI reutilizable (DishCard, timeline, mapa…)
@@ -172,8 +238,8 @@ resources/signing/          ← llave de PRUEBAS para firmar el APK (fija)
 
 ## Verificación realizada
 
-- `schema.sql` probado en **PostgreSQL real (PGlite)** con un entorno tipo Supabase: **73 pruebas OK**, entre ellas RLS, validaciones, reserva y vencimiento, pagos en línea (solo el servidor puede confirmarlos, sin dobles cobros) y protección contra sobreventa, reseñas solo con compra verificada, extras con precio del servidor y términos obligatorios para comer en el hogar.
+- `schema.sql` probado en **PostgreSQL real (PGlite)** con un entorno tipo Supabase: **130 pruebas OK**, entre ellas RLS, validaciones, reserva y vencimiento, pagos en línea (solo el servidor puede confirmarlos, sin dobles cobros) y protección contra sobreventa, reseñas solo con compra verificada, extras con precio del servidor y términos obligatorios para comer en el hogar, la ubicación exacta de la cocina solo se revela al aceptar, que se puede pedir a cualquier hora, que nadie puede hacerse administrador ni ver el panel sin serlo, la comisión mínima de 2 % (y que los pedidos antiguos conservan la suya), el aviso de salida único, los pedidos de varias mamitas (todo o nada, un solo pago) y las monedas (nadie puede regalarse monedas ni usar cupones ajenos).
 - La función `pagar` pasa la verificación de tipos de **Deno** (el entorno de Supabase Edge Functions).
-- Recorridos completos en **Chromium móvil** (390×844): **35 + 23 + 37 pasos OK**, sin errores de consola (registro, alertas de alergia, extras, visor 3D, Google Maps, comentarios, comer en el hogar con términos, Yape con código, tarjeta con 3-D Secure por SMS, calificaciones con respuesta, bienvenida y guía de la mamá nueva). Además, ninguna pantalla se desborda a lo ancho en celulares de 360 px.
+- Recorridos completos en **Chromium móvil** (390×844): **37 + 23 + 37 + 18 + 28 + 31 pasos OK**, sin errores de consola (registro, alertas de alergia, extras, visor 3D, Google Maps, comentarios, comer en el hogar con términos, Yape con código, tarjeta con 3-D Secure por SMS, calificaciones con respuesta, bienvenida y guía de la mamá nueva, “Cerca de mí”, ruta y tiempo a pie y en auto, delivery con ubicación y ruta exacta al aceptar, portada, cierre 9:59/10:01, varios platos de 3 mamitas con un solo pago, monedas, canje y cupón, aviso “ya salió” en Mis pedidos, migración de datos, colores del logo, perfil “Sobre mí” y panel del administrador con comisión). Además, ninguna pantalla se desborda a lo ancho en celulares de 360 px.
 - La conexión real con Mercado Pago no se pudo probar desde aquí (sin acceso a internet externo): pruébala con las credenciales y datos de prueba de la tabla de arriba.
 - El proyecto Android se genera con Capacitor 7 (SDK 35). El APK se compila con la alternativa A o la B.

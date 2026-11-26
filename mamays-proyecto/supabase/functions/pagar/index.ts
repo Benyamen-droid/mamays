@@ -8,6 +8,7 @@
 //  SUPABASE_URL, SUPABASE_ANON_KEY y SUPABASE_SERVICE_ROLE_KEY los pone Supabase automáticamente.
 //
 //  El monto SIEMPRE se toma del pedido guardado en la base de datos, nunca del celular.
+//  Si el comensal pidió a varias mamitas a la vez, se cobra UNA vez el total del grupo.
 // =====================================================================
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
@@ -68,18 +69,26 @@ Deno.serve(async (req) => {
     }
 
     // 2b) Cobrar
-    if (order.status !== 'reservado') return json({ status: 'rejected', message: 'Este pedido ya no está esperando pago.' })
-    if (order.reserved_until && new Date(order.reserved_until).getTime() < Date.now()) {
+    // Todos los pedidos del grupo (o solo este, si es de una sola mamita)
+    const grupo = order.group_id
+      ? ((await admin.from('orders').select('*').eq('group_id', order.group_id)).data ?? [])
+      : [order]
+    if (grupo.some((o: typeof order) => o.comensal_id !== user.id)) return json({ error: 'PEDIDO_NO_EXISTE' }, 404)
+    if (grupo.some((o: typeof order) => o.status !== 'reservado')) return json({ status: 'rejected', message: 'Este pedido ya no está esperando pago.' })
+    if (grupo.some((o: typeof order) => o.reserved_until && new Date(o.reserved_until).getTime() < Date.now())) {
       return json({ status: 'rejected', message: 'Pasaron los 15 minutos de reserva. Vuelve a hacer tu pedido.' })
     }
     if (!['yape', 'tarjeta'].includes(order.payment_method)) return json({ error: 'ESTADO_INVALIDO' }, 400)
     if (typeof body.token !== 'string' || body.token.length < 8) return json({ error: 'Falta el token de pago.' }, 400)
+    const monto = Math.round(grupo.reduce((a: number, o: typeof order) => a + Number(o.total), 0) * 100) / 100
+    const codigos = grupo.map((o: typeof order) => o.code).join(', ')
+    const mamitas = [...new Set(grupo.map((o: typeof order) => o.mamita_name))].join(', ')
 
     const esYape = order.payment_method === 'yape'
     const pago: Record<string, unknown> = {
-      transaction_amount: Number(order.total),
+      transaction_amount: monto,
       token: body.token,
-      description: `MAMAYS ${order.code} · ${order.mamita_name}`,
+      description: `MAMAYS ${codigos} · ${mamitas}`.slice(0, 250),
       installments: esYape ? 1 : Math.max(1, Math.min(12, Number(body.installments) || 1)),
       payment_method_id: esYape ? 'yape' : String(body.payment_method_id ?? ''),
       external_reference: order.id,
@@ -88,7 +97,7 @@ Deno.serve(async (req) => {
         email: user.email,
         ...(body.identification?.number ? { identification: { type: String(body.identification.type || 'DNI'), number: String(body.identification.number) } } : {}),
       },
-      metadata: { order_id: order.id, order_code: order.code },
+      metadata: { order_id: order.id, order_code: order.code, group_id: order.group_id ?? null, orders: codigos },
     }
     if (!esYape) {
       if (body.issuer_id) pago.issuer_id = body.issuer_id

@@ -1,13 +1,17 @@
-import { useEffect, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { HashRouter, MemoryRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AppProvider, useAuth } from './context/AppContext'
-import type { Role } from './lib/types'
+import { inicioDe, type Role } from './lib/types'
 import { Loading } from './components/ui'
+import { Splash, debeMostrarPortada } from './components/Splash'
+import { MAMAYS_CORAL } from './components/Brand'
 import { AuthChoice, ForgotPassword, Login, Register, Welcome } from './pages/auth/AuthPages'
 import { ComensalHome, DishDetail, MamitaPublicPage } from './pages/comensal/Catalog'
 import { CartPage, ConfirmedPage, PayPage } from './pages/comensal/Checkout'
 import { ComensalProfile, MyOrders, OrderDetail } from './pages/comensal/Account'
 import { NotificationsPage } from './pages/Notifications'
+import { MonedasPage } from './pages/Monedas'
+import { AdminPanel } from './pages/admin/AdminPanel'
 import { DishForm, MamitaHome, MamitaOrders, MamitaProfile, MamitaSales, MyDishes } from './pages/mamita/MamitaPages'
 import { MamitaGuide, MamitaWelcome } from './pages/mamita/MamitaHelp'
 
@@ -15,8 +19,8 @@ import { MamitaGuide, MamitaWelcome } from './pages/mamita/MamitaHelp'
 function Guard({ role, children }: { role: Role; children: ReactNode }) {
   const { profile, loading } = useAuth()
   if (loading) return <Loading text="Abriendo tu espacio…" />
-  if (!profile) return <Navigate to={`/acceso/${role}`} replace />
-  if (profile.role !== role) return <Navigate to={profile.role === 'mamita' ? '/mamita' : '/comensal'} replace />
+  if (!profile) return <Navigate to={role === 'admin' ? '/ingresar/admin' : `/acceso/${role}`} replace />
+  if (profile.role !== role) return <Navigate to={inicioDe(profile.role)} replace />
   return <>{children}</>
 }
 
@@ -28,9 +32,12 @@ function ScrollToTop() {
 
 function Root() {
   const { loading } = useAuth()
-  if (loading) return <div className="grid min-h-full place-items-center bg-guinda"><Loading text="" /></div>
+  const [portada, setPortada] = useState(debeMostrarPortada)
+  const fin = useCallback(() => setPortada(false), [])
+  if (loading) return portada ? <Splash onDone={fin} /> : <div className="grid min-h-full place-items-center" style={{ background: MAMAYS_CORAL }}><Loading text="" /></div>
   return (
     <>
+    {portada && <Splash onDone={fin} />}
     <ScrollToTop />
     <Routes>
       <Route path="/" element={<Welcome />} />
@@ -49,6 +56,9 @@ function Root() {
       <Route path="/comensal/pedidos/:id" element={<Guard role="comensal"><OrderDetail /></Guard>} />
       <Route path="/comensal/avisos" element={<Guard role="comensal"><NotificationsPage /></Guard>} />
       <Route path="/comensal/perfil" element={<Guard role="comensal"><ComensalProfile /></Guard>} />
+      <Route path="/comensal/monedas" element={<Guard role="comensal"><MonedasPage /></Guard>} />
+      <Route path="/mamita/monedas" element={<Guard role="mamita"><MonedasPage /></Guard>} />
+      <Route path="/admin" element={<Guard role="admin"><AdminPanel /></Guard>} />
 
       <Route path="/mamita" element={<Guard role="mamita"><MamitaHome /></Guard>} />
       <Route path="/mamita/platos" element={<Guard role="mamita"><MyDishes /></Guard>} />

@@ -176,3 +176,7 @@ export const PAYMENT_LABEL: Record<string, string> = {
   yape_manual: 'Yape a la mamita (constancia)',
   efectivo: 'Efectivo al recibir',
 }
+
+/** Aviso automático cuando el pedido sale (estado en_camino) */
+export const VENTANA_ENTREGA = 'entre 12:30 y 1:30 p. m.'
+export const avisoSalida = (mamita: string) => `Tu almuerzo de ${mamita} ya salió. Llegará ${VENTANA_ENTREGA}`

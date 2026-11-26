@@ -140,7 +140,7 @@ function CardPreview({ number, name, exp, brand }: { number: string; name: strin
   const d = number.replace(/\D/g, '')
   const shown = (d + '•'.repeat(Math.max(0, 16 - d.length))).slice(0, 16).replace(/(.{4})/g, '$1 ').trim()
   return (
-    <div className="relative aspect-[1.586] w-full overflow-hidden rounded-[22px] bg-gradient-to-br from-[#2b1d21] via-[#5a1630] to-[#A3173B] p-5 text-white shadow-[0_16px_30px_-14px_rgb(0_0_0/0.6)]">
+    <div className="relative aspect-[1.586] w-full overflow-hidden rounded-[22px] bg-gradient-to-br from-[#2c1a1a] via-[#5a1630] to-[#D33434] p-5 text-white shadow-[0_16px_30px_-14px_rgb(0_0_0/0.6)]">
       <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full border-[22px] border-white/10" />
       <div className="flex items-start justify-between">
         <div className="h-8 w-11 rounded-md bg-gradient-to-br from-[#f3d38a] to-[#c9a24a]" aria-hidden="true" />

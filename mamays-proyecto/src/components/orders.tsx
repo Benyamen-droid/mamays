@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Check, Clock } from 'lucide-react'
+import { Bike, Check, Clock } from 'lucide-react'
 import type { Order, OrderStatus } from '../lib/types'
-import { STATUS_BADGE, STATUS_LABEL, statusLabel, timelineSteps } from '../lib/constants'
+import { STATUS_BADGE, STATUS_LABEL, avisoSalida, statusLabel, timelineSteps } from '../lib/constants'
 import { hora, soles } from '../lib/format'
 import { api } from '../data'
 import { DishPhoto } from './ui'
@@ -59,13 +59,31 @@ export function OrderTimeline({ order }: { order: Order }) {
   )
 }
 
+/** Aviso “tu almuerzo ya salió” guardado en el pedido (visible aunque no se haya abierto la notificación) */
+export function AvisoSalida({ o, compacto = false }: { o: Order; compacto?: boolean }) {
+  if (!o.aviso_salida_at || o.status !== 'en_camino') return null
+  return (
+    <div data-testid="aviso-salida" className={`flex items-start gap-2.5 rounded-2xl bg-[#e8f5ee] text-[#1d6b41] ${compacto ? 'mt-2 px-3 py-2 text-[12.5px]' : 'p-3.5 text-sm'}`}>
+      <Bike size={compacto ? 16 : 20} className="mt-0.5 shrink-0" />
+      <span><b>{avisoSalida(o.mamita_name)}</b>{!compacto && <span className="block text-xs opacity-80">Salió a las {new Date(o.aviso_salida_at).toLocaleTimeString('es-PE', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Lima' })}.</span>}</span>
+    </div>
+  )
+}
+
 export function OrderTotals({ o }: { o: Order }) {
   return (
+    <>
+    {o.discount > 0 && (
+      <div className="mb-2 flex items-center justify-between rounded-xl bg-[#fff4d6] px-3 py-2 text-[13px] text-[#7a5a10]" data-testid="descuento">
+        <span>🪙 Descuento con monedas Mamays <span className="text-[11px]">(lo asume MAMAYS)</span></span><b className="whitespace-nowrap">− {soles(o.discount)}</b>
+      </div>
+    )}
     <div className="grid grid-cols-3 gap-2 text-center">
       <div className="rounded-xl bg-crema p-2"><div className="text-[10px] text-gris">Platos</div><div className="text-sm font-bold">{soles(o.subtotal)}</div></div>
       <div className="rounded-xl bg-crema p-2"><div className="text-[10px] text-gris">{o.mode === 'delivery' ? 'Delivery' : o.mode === 'en_casa' ? 'En el hogar' : 'Recojo'}</div><div className="text-sm font-bold">{soles(o.delivery_cost)}</div></div>
       <div className="rounded-xl bg-guinda-50 p-2"><div className="text-[10px] text-gris">Total</div><div className="text-sm font-extrabold text-guinda">{soles(o.total)}</div></div>
     </div>
+    </>
   )
 }
 

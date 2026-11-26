@@ -1,5 +1,6 @@
 import type {
-  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, Review, ReviewsInput, SignUpInput,
+  AdminDatos, AppNotification, Dish, DishView, MamitaPublic, MisMonedas, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, PlaceOrdersInput,
+  PointsEntry, Profile, RankRow, Redemption, Review, ReviewsInput, Reward, Role, SignUpInput,
 } from '../lib/types'
 
 export type ImageKind = 'dish' | 'avatar' | 'home' | 'voucher'
@@ -34,6 +35,10 @@ export interface Api {
 
   // Pedidos
   placeOrder(input: PlaceOrderInput): Promise<string>
+  /** Varias mamitas a la vez: crea un pedido por mamita (todo o nada) y devuelve sus ids */
+  placeOrders(input: PlaceOrdersInput): Promise<string[]>
+  /** Todos los pedidos del mismo grupo (o solo ese pedido) */
+  getOrderGroup(id: string): Promise<Order[]>
   submitVoucher(orderId: string, voucherRef: string): Promise<void>
   listMyOrders(): Promise<Order[]>
   getOrder(id: string): Promise<Order | null>
@@ -51,6 +56,20 @@ export interface Api {
   payOnline(orderId: string, input: PayInput): Promise<PayResult>
   /** Tras la verificación 3-D Secure: en demo valida el código; con Mercado Pago consulta el estado */
   confirmChallenge(orderId: string, code?: string): Promise<PayResult>
+
+  // Administrador (panel de ventas)
+  adminDatos(desde: string, hasta: string): Promise<AdminDatos>
+  adminSetComision(pct: number): Promise<number>
+  /** % de comisión de MAMAYS (mínimo 2 %) */
+  comisionPct(): Promise<number>
+
+  // Monedas Mamays
+  misMonedas(): Promise<MisMonedas>
+  listPoints(): Promise<PointsEntry[]>
+  listRewards(): Promise<Reward[]>
+  redeemReward(rewardId: string): Promise<Redemption>
+  listRedemptions(): Promise<Redemption[]>
+  ranking(role: Role): Promise<RankRow[]>
 
   // Avisos y favoritos
   listNotifications(): Promise<AppNotification[]>
@@ -90,6 +109,20 @@ export function mensajeError(e: unknown): string {
     DEMASIADOS_COMENTARIOS: 'Ya comentaste mucho hoy. Inténtalo mañana.',
     PLATO_NO_ESTA_EN_EL_PEDIDO: 'Ese plato no estaba en tu pedido.',
     AUN_NO_ENTREGADO: 'Podrás calificar cuando recibas tu pedido.',
+    EN_CASA_UNA_MAMITA: 'Comer en el hogar es con una sola mamita. Deja en el carrito solo sus platos.',
+    YAPE_MANUAL_UNA_MAMITA: 'Yape con constancia se paga a una sola mamita. Elige Yape en línea, tarjeta o efectivo.',
+    DEMASIADAS_MAMITAS: 'Puedes pedir a 5 mamitas como máximo a la vez.',
+    MAMITA_REPETIDA: 'Hay un problema con tu carrito. Vuelve a intentarlo.',
+    CUPON_INVALIDO: 'Ese cupón ya no está disponible.',
+    CUPON_SOLO_DELIVERY: 'El cupón “Delivery gratis” solo sirve para pedidos con delivery.',
+    SOLO_ADMIN: 'Esta sección es solo para el administrador.',
+    COMISION_MINIMA: 'La comisión no puede ser menor a 2 %.',
+    COMISION_MAXIMA: 'La comisión no puede ser mayor a 30 %.',
+    SALDO_INSUFICIENTE: 'Aún no tienes monedas suficientes para este premio.',
+    PREMIO_NO_EXISTE: 'Ese premio ya no está disponible.',
+    UBICACION_DENEGADA: 'No diste permiso de ubicación. Actívalo en Ajustes → Apps → MAMAYS → Permisos → Ubicación.',
+    UBICACION_NO_DISPONIBLE: 'No pudimos obtener tu ubicación. Activa el GPS e inténtalo de nuevo.',
+    UBICACION_INVALIDA: 'La ubicación no es válida. Vuelve a marcarla.',
     CODIGO_INCORRECTO: `Código incorrecto.${extra ? ` Te quedan ${extra} intentos.` : ''}`,
   }
   for (const k of Object.keys(map)) if (raw.includes(k) || code === k) return map[k]

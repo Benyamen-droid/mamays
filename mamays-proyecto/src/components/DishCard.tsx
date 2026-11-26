@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { ChevronRight, Heart, Timer, TriangleAlert } from 'lucide-react'
+import { ChevronRight, Footprints, Heart, MapPin, Minus, Plus, Timer, TriangleAlert } from 'lucide-react'
 import type { DishView } from '../lib/types'
 import { estadoHorario, horarioCorto, soles } from '../lib/format'
 import { horarioPreset } from '../lib/constants'
@@ -19,7 +19,14 @@ export function dishTags(d: DishView, alergiasUsuario: string[] = []) {
   return tags.sort((a, b) => prio(b) - prio(a))
 }
 
-export function DishCard({ d, fav, onFav, userAllergies = [] }: { d: DishView; fav: boolean; onFav: () => void; userAllergies?: string[] }) {
+export function DishCard({ d, fav, onFav, userAllergies = [], distancia, enCarrito = 0, onAdd, onRemove }: {
+  d: DishView; fav: boolean; onFav: () => void; userAllergies?: string[]; distancia?: { km: string; min: string }
+  /** porciones de este plato ya en el carrito */
+  enCarrito?: number
+  /** agregar 1 porción sin salir del menú (elegir varios platos a la vez) */
+  onAdd?: () => void
+  onRemove?: () => void
+}) {
   const agotado = d.available === 0
   const ultima = d.available === 1
   const tags = dishTags(d, userAllergies)
@@ -60,13 +67,30 @@ export function DishCard({ d, fav, onFav, userAllergies = [] }: { d: DishView; f
             <Timer size={12} /> {horarioPreset(d.available_from, d.available_to)?.id === 'tarde' ? 'Toda la tarde · ' : ''}{horarioCorto(d.available_from, d.available_to)}
           </div>
         )}
+        {distancia && (
+          <div className="mt-0.5 inline-flex items-center gap-1 whitespace-nowrap text-[10.5px] font-semibold text-cafe" data-testid="distancia-card">
+            <MapPin size={12} className="text-guinda" /> {distancia.km} · <Footprints size={12} /> {distancia.min}
+          </div>
+        )}
         <div className="mb-3 mt-2 flex flex-wrap gap-1">
           {shown.map((t) => <Tag key={t.label} label={t.label} alert={t.alert} sm />)}
           {tags.length > shown.length && <Link to={`/comensal/plato/${d.id}`} className="self-center whitespace-nowrap text-[10px] font-bold text-guinda">+{tags.length - shown.length} más</Link>}
         </div>
-        <div className="mt-auto flex items-center justify-between border-t border-borde pt-3">
+        <div className="mt-auto flex items-center justify-between gap-1 border-t border-borde pt-3">
           <span className="whitespace-nowrap text-[16px] font-extrabold text-guinda">{soles(d.price)}</span>
-          <Link to={`/comensal/plato/${d.id}`} className="inline-flex items-center whitespace-nowrap text-[11px] font-bold text-cafe">Ver <ChevronRight size={13} /></Link>
+          {onAdd && !agotado ? (
+            enCarrito > 0 ? (
+              <span className="inline-flex items-center rounded-full bg-guinda text-white shadow" data-testid="stepper-card">
+                <button onClick={onRemove} aria-label={`Quitar una porción de ${d.name}`} className="grid h-8 w-8 place-items-center"><Minus size={15} /></button>
+                <span className="min-w-4 text-center text-sm font-extrabold" aria-label={`${enCarrito} en el carrito`}>{enCarrito}</span>
+                <button onClick={onAdd} aria-label={`Agregar otra porción de ${d.name}`} className="grid h-8 w-8 place-items-center"><Plus size={15} /></button>
+              </span>
+            ) : (
+              <button onClick={onAdd} aria-label={`Agregar ${d.name} al carrito`} className="grid h-9 w-9 place-items-center rounded-full bg-guinda text-white shadow-[0_6px_14px_-6px_rgb(211_52_52/0.8)]"><Plus size={18} /></button>
+            )
+          ) : (
+            <Link to={`/comensal/plato/${d.id}`} className="inline-flex items-center whitespace-nowrap text-[11px] font-bold text-cafe">Ver <ChevronRight size={13} /></Link>
+          )}
         </div>
       </div>
     </article>

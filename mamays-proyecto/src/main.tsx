@@ -8,6 +8,7 @@ import '@fontsource/inter/latin-800.css'
 import '@fontsource/playfair-display/latin-600.css'
 import '@fontsource/playfair-display/latin-700.css'
 import '@fontsource/playfair-display/latin-400-italic.css'
+import '@fontsource/poppins/latin-500.css'
 import './styles.css'
 import App from './App'
 

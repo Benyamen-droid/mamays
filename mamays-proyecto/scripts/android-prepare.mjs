@@ -35,7 +35,7 @@ fs.writeFileSync(path.join(anydpi, 'ic_launcher_round.xml'), adaptive)
 const values = path.join(resDst, 'values')
 fs.mkdirSync(values, { recursive: true })
 fs.writeFileSync(path.join(values, 'ic_launcher_background.xml'),
-  `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#A3173B</color>\n</resources>\n`)
+  `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#FE504F</color>\n</resources>\n`)
 
 // 2) Nombre visible de la app
 const strings = path.join(values, 'strings.xml')
@@ -60,10 +60,31 @@ if (!g.includes('// MAMAYS-FIRMA')) {
             keyPassword "mamays-pruebas"
         }
     }`)
-  // Versión automática: cada compilación de GitHub sube el número (APK #5 → versión 2.3.5)
+  // Versión automática: cada compilación de GitHub sube el número (APK #5 → versión 2.6.5)
   g = g.replace(/versionCode\s+\d+/, 'versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")')
-  g = g.replace(/versionName\s+"[^"]*"/, 'versionName "2.3." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")')
+  g = g.replace(/versionName\s+"[^"]*"/, 'versionName "2.6." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")')
   fs.writeFileSync(gradle, g)
+}
+
+// 3a) Splash nativo con el logo de Mamays (fondo coral). En Android 12+ el sistema muestra el ícono del plato.
+const styles = path.join(root, 'android', 'app', 'src', 'main', 'res', 'values', 'styles.xml')
+let st = fs.readFileSync(styles, 'utf8')
+if (!st.includes('windowSplashScreenBackground')) {
+  st = st.replace('<item name="android:background">@drawable/splash</item>', `<item name="android:background">@drawable/splash</item>
+        <item name="windowSplashScreenBackground">#FE504F</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>`)
+  fs.writeFileSync(styles, st)
+}
+
+// 3b) Permiso de ubicación (para calcular la ruta y el tiempo de llegada)
+const manifest = path.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
+let mf = fs.readFileSync(manifest, 'utf8')
+if (!mf.includes('ACCESS_FINE_LOCATION')) {
+  mf = mf.replace('</manifest>', `    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+</manifest>`)
+  fs.writeFileSync(manifest, mf)
 }
 
 // 4) Copiar la web compilada dentro del APK

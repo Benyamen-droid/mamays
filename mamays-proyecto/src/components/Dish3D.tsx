@@ -115,7 +115,7 @@ export function Dish3DViewer({ src, name, onClose }: { src?: string; name: strin
       new THREE.MeshPhysicalMaterial({ color: 0xfbf7f2, roughness: 0.28, clearcoat: 0.9, clearcoatRoughness: 0.18, side: THREE.DoubleSide }))
     plate.castShadow = true; plate.receiveShadow = true
     scene.add(plate)
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.008, 8, 160), new THREE.MeshStandardMaterial({ color: 0xa3173b, roughness: 0.4 }))
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.008, 8, 160), new THREE.MeshStandardMaterial({ color: 0xfe504f, roughness: 0.4 }))
     ring.rotation.x = -Math.PI / 2; ring.position.y = 0.178; scene.add(ring)
 
     const group = new THREE.Group(); scene.add(group); group.add(plate, ring)
@@ -169,10 +169,10 @@ export function Dish3DViewer({ src, name, onClose }: { src?: string; name: strin
   useEffect(() => { if (ctrl.current) ctrl.current.autoRotate = auto }, [auto])
 
   return (
-    <div className="fixed inset-0 z-[70] flex flex-col bg-gradient-to-b from-[#2b1d21] to-[#120c0e] text-white" role="dialog" aria-modal="true" aria-label={`Vista 3D de ${name}`}>
+    <div className="fixed inset-0 z-[70] flex flex-col bg-gradient-to-b from-[#2c1a1a] to-[#120c0e] text-white" role="dialog" aria-modal="true" aria-label={`Vista 3D de ${name}`}>
       <div className="flex items-center justify-between px-5 pb-2 pt-4 safe-top">
         <div>
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-[#F7B6C8]">Vista 3D</div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-[#FFC9C5]">Vista 3D</div>
           <div className="font-serif text-xl font-bold">{name}</div>
         </div>
         <button onClick={onClose} aria-label="Cerrar vista 3D" className="grid h-11 w-11 place-items-center rounded-full bg-white/10"><X /></button>

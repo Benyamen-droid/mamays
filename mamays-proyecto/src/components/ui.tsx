@@ -1,8 +1,9 @@
+import { inicioDe } from '../lib/types'
+import { MAMAYS_CORAL, MamaysLogo } from './Brand'
 import { useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Bell, ChevronLeft, Clock, DoorOpen, House, ImagePlus, Leaf, LogOut, Minus, Plus, ReceiptText, RotateCcw,
-  Salad, ShoppingBag, Sparkles, Store, Target, TriangleAlert, Truck, UserRound, X,
+  Bell, ChevronLeft, Clock, Coins, DoorOpen, House, ImagePlus, Leaf, LogOut, Minus, Plus, ReceiptText, RotateCcw, Salad, ShoppingBag, Sparkles, Store, Target, TriangleAlert, Truck, UserRound, X,
 } from 'lucide-react'
 import { useAuth, useCart, useNotifications, useToast } from '../context/AppContext'
 import { api } from '../data'
@@ -11,17 +12,9 @@ import { comprimirImagen, primerNombre } from '../lib/format'
 import { dishArt } from '../data/demoArt'
 
 /* ---------------- Marca ---------------- */
+/** Logo oficial de Mamays (vector). Coral sobre fondo claro; blanco sobre coral. */
 export function Logo({ light = false, small = false }: { light?: boolean; small?: boolean }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <div className={`grid place-items-center rounded-xl font-serif font-bold ${small ? 'h-9 w-9 text-lg' : 'h-11 w-11 text-xl'} ${
-        light ? 'bg-white text-guinda' : 'bg-guinda text-white'}`}>M</div>
-      <div className="leading-tight">
-        <div className={`font-serif font-bold tracking-wide ${small ? 'text-lg' : 'text-xl'} ${light ? 'text-white' : 'text-guinda'}`}>MAMAYS</div>
-        <div className={`text-[10px] ${light ? 'text-white/80' : 'text-gris'}`}>comida casera hecha con amor</div>
-      </div>
-    </div>
-  )
+  return <MamaysLogo className={small ? 'h-7 w-auto' : 'h-12 w-auto'} tagline={!small} color={light ? '#fff' : MAMAYS_CORAL} />
 }
 
 export const Eyebrow = ({ children, className = '' }: { children: ReactNode; className?: string }) =>
@@ -65,7 +58,7 @@ export function DishPhoto({ src, alt, className = '', onClick }: { src?: string;
 type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'dark' | 'ghost' | 'danger'; loading?: boolean; full?: boolean }
 export function Button({ variant = 'primary', loading, full = true, className = '', children, disabled, ...rest }: BtnProps) {
   const styles = {
-    primary: 'bg-guinda text-white shadow-[0_8px_20px_-8px_rgb(163_23_59/0.6)] hover:bg-guinda-700 disabled:bg-[#d98aa0] disabled:shadow-none',
+    primary: 'bg-guinda text-white shadow-[0_8px_20px_-8px_rgb(211_52_52/0.6)] hover:bg-guinda-700 disabled:bg-[#F0A3A0] disabled:shadow-none',
     secondary: 'bg-white text-guinda border border-borde hover:bg-guinda-50',
     dark: 'bg-cafe text-white hover:bg-[#3a262b]',
     ghost: 'bg-transparent text-guinda hover:bg-guinda-50',
@@ -197,7 +190,7 @@ export function Loading({ text = 'Cargando…' }: { text?: string }) {
 }
 
 export function Card({ children, className = '', tone = 'white' }: { children: ReactNode; className?: string; tone?: 'white' | 'crema' | 'rosa' }) {
-  const bg = tone === 'crema' ? 'bg-crema-200 border-[#f6e0cd]' : tone === 'rosa' ? 'bg-guinda-50 border-[#f5d3dc]' : 'bg-white border-borde'
+  const bg = tone === 'crema' ? 'bg-crema-200 border-[#f6e0cd]' : tone === 'rosa' ? 'bg-guinda-50 border-[#FCD5D2]' : 'bg-white border-borde'
   return <div className={`rounded-[20px] border p-4 ${bg} ${className}`}>{children}</div>
 }
 
@@ -250,7 +243,7 @@ export function ImagePicker({ images, onChange, max = 4, kind, label = 'Agregar 
       ))}
       {images.length < max && (
         <button type="button" onClick={() => ref.current?.click()} disabled={busy}
-          className="flex h-24 w-24 flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-[#e6c6cf] bg-guinda-50/50 text-xs font-semibold text-guinda">
+          className="flex h-24 w-24 flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-[#F4CFCB] bg-guinda-50/50 text-xs font-semibold text-guinda">
           {busy ? <span className="h-6 w-6 animate-spin rounded-full border-2 border-guinda border-t-transparent" /> : <ImagePlus size={22} />}
           {busy ? 'Subiendo…' : label}
         </button>
@@ -267,18 +260,18 @@ export function Header() {
   const { count } = useCart()
   const nav = useNavigate()
   if (!profile) return null
-  const base = profile.role === 'mamita' ? '/mamita' : '/comensal'
+  const base = inicioDe(profile.role)
   return (
     <header className="sticky top-0 z-30 border-b border-borde/70 bg-white/95 backdrop-blur safe-top">
       <div className="flex items-center justify-between px-4 py-2.5">
         <Link to={base} aria-label="Ir al inicio de MAMAYS"><Logo small /></Link>
         <div className="flex items-center gap-1.5">
           {profile.role === 'mamita' && <span className="mr-1 hidden text-sm font-semibold text-cafe min-[380px]:inline">{primerNombre(profile.full_name)}</span>}
-          <button onClick={() => nav(`${base}/avisos`)} aria-label={`Avisos${unread ? `, ${unread} sin leer` : ''}`}
+          {profile.role !== 'admin' && <button onClick={() => nav(`${base}/avisos`)} aria-label={`Avisos${unread ? `, ${unread} sin leer` : ''}`}
             className="relative grid h-10 w-10 place-items-center rounded-full bg-crema-200 text-guinda">
             <Bell size={19} />
             {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 place-items-center rounded-full bg-guinda px-1 text-[10px] font-bold text-white">{unread > 9 ? '9+' : unread}</span>}
-          </button>
+          </button>}
           {profile.role === 'comensal' && (
             <button onClick={() => nav('/comensal/carrito')} aria-label={`Carrito, ${count} platos`}
               className="relative grid h-10 w-10 place-items-center rounded-full bg-crema-200 text-guinda">
@@ -297,17 +290,19 @@ export function Header() {
 export function BottomNav() {
   const { profile } = useAuth()
   const loc = useLocation()
-  if (!profile) return null
+  if (!profile || profile.role === 'admin') return null
   const items = profile.role === 'mamita'
     ? [
         { to: '/mamita', label: 'Inicio', icon: <House size={21} /> },
         { to: '/mamita/platos', label: 'Mis platos', icon: <Target size={21} /> },
         { to: '/mamita/pedidos', label: 'Pedidos', icon: <ShoppingBag size={21} /> },
+        { to: '/mamita/monedas', label: 'Monedas', icon: <Coins size={21} /> },
         { to: '/mamita/perfil', label: 'Mi perfil', icon: <UserRound size={21} /> },
       ]
     : [
         { to: '/comensal', label: 'Inicio', icon: <House size={21} /> },
         { to: '/comensal/pedidos', label: 'Mis pedidos', icon: <ReceiptText size={21} /> },
+        { to: '/comensal/monedas', label: 'Monedas', icon: <Coins size={21} /> },
         { to: '/comensal/perfil', label: 'Mi perfil', icon: <UserRound size={21} /> },
       ]
   const active = (to: string) => (to === '/mamita' || to === '/comensal' ? loc.pathname === to : loc.pathname.startsWith(to))

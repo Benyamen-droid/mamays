@@ -4,19 +4,21 @@ import { ChevronDown, ChevronRight, Eye, EyeOff, Heart, MailCheck, Target } from
 import { api, mensajeError } from '../../data'
 import { useAuth, useToast } from '../../context/AppContext'
 import { ALERGENOS, ZONAS } from '../../lib/constants'
-import type { Role } from '../../lib/types'
+import { inicioDe, type Role } from '../../lib/types'
 import { celularValido, emailValido, primerNombre } from '../../lib/format'
 import { BackButton, Button, CheckGrid, DemoBanner, Eyebrow, Field, Logo } from '../../components/ui'
 
-const home = (r: Role) => (r === 'mamita' ? '/mamita' : '/comensal')
+const home = (r: Role) => inicioDe(r)
 const rolOk = (r?: string): Role => (r === 'mamita' ? 'mamita' : 'comensal')
+/** En el inicio de sesión también existe el acceso del administrador (no tiene registro) */
+const rolLogin = (r?: string): Role => (r === 'admin' ? 'admin' : rolOk(r))
 
 /* ===================== BIENVENIDA ===================== */
 export function Welcome() {
   const { profile } = useAuth()
   if (profile) return <Navigate to={home(profile.role)} replace />
   return (
-    <div className="relative min-h-dvh overflow-hidden bg-guinda text-white">
+    <div className="relative min-h-dvh overflow-hidden bg-gradient-to-b from-coral from-0% to-guinda to-[42%] text-white">
       <DemoBanner />
       <div className="pointer-events-none absolute -right-24 top-24 h-72 w-72 rounded-full border-[36px] border-white/10" />
       <div className="pointer-events-none absolute -left-16 bottom-28 h-48 w-48 rounded-full bg-white/5" />
@@ -43,7 +45,7 @@ export function Welcome() {
         </div>
         <Eyebrow className="mt-6 !text-white/85">Bienvenidos a nuestra mesa</Eyebrow>
         <h1 className="mt-2 font-serif text-[40px] font-bold leading-[1.05]">
-          El sabor de casa,<br /><span className="text-[#F7B6C8]">más cerca de ti</span>
+          El sabor de casa,<br /><span className="text-[#FFC9C5]">más cerca de ti</span>
         </h1>
         <p className="mt-3 text-[15px] text-white/90">¡Qué alegría tenerte aquí! Cuéntanos, ¿cómo deseas ingresar?</p>
 
@@ -55,6 +57,7 @@ export function Welcome() {
         <p className="mt-8 text-center font-serif text-[15px] italic text-white/90">
           “Cada platito tiene una historia y cada sabor nos acerca a casa”.
         </p>
+        <Link to="/ingresar/admin" className="mt-6 block text-center text-[12px] font-semibold text-white/75 underline">Acceso para el administrador</Link>
       </div>
     </div>
   )
@@ -101,19 +104,13 @@ export function AuthChoice() {
         <Link to={`/registro/${rol}`} className="block"><Button variant="secondary">Crear una cuenta</Button></Link>
       </div>
       <p className="mt-6 text-center text-xs text-gris">Tu sesión es privada e independiente del panel administrativo.</p>
-      {api.mode === 'demo' && (
-        <div className="mt-8 rounded-2xl border border-dashed border-[#e6c6cf] bg-guinda-50/60 p-4 text-[13px] text-cafe">
-          <b>Cuentas de prueba</b> (contraseña <b>demo123</b>):<br />
-          {rol === 'comensal' ? 'comensal@demo.pe' : 'juana@demo.pe · teodora@demo.pe · marta@demo.pe · elena@demo.pe'}
-        </div>
-      )}
     </AuthShell>
   )
 }
 
 /* ===================== INICIAR SESIÓN ===================== */
 export function Login() {
-  const rol = rolOk(useParams().rol)
+  const rol = rolLogin(useParams().rol)
   const { setProfile } = useAuth()
   const { toast } = useToast()
   const nav = useNavigate()
@@ -138,9 +135,9 @@ export function Login() {
   }
 
   return (
-    <AuthShell back={`/acceso/${rol}`}>
-      <Eyebrow>Tu espacio de {rol}</Eyebrow>
-      <h1 className="mt-2 font-serif text-[32px] font-bold leading-tight">Hola de nuevo</h1>
+    <AuthShell back={rol === 'admin' ? '/' : `/acceso/${rol}`}>
+      <Eyebrow>{rol === 'admin' ? 'Administrador de MAMAYS' : `Tu espacio de ${rol}`}</Eyebrow>
+      <h1 className="mt-2 font-serif text-[32px] font-bold leading-tight">{rol === 'admin' ? 'Panel de ventas' : 'Hola de nuevo'}</h1>
       <form onSubmit={submit} className="mt-6 space-y-4" noValidate>
         <Field label="Correo electrónico">
           <input className="field-input" type="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -158,7 +155,7 @@ export function Login() {
         <Button type="submit" loading={busy}>Ingresar</Button>
         <div className="flex justify-between text-sm">
           <Link to="/recuperar" className="font-semibold text-guinda">¿Olvidaste tu contraseña?</Link>
-          <Link to={`/registro/${rol}`} className="font-semibold text-cafe">Crear cuenta</Link>
+          {rol !== 'admin' && <Link to={`/registro/${rol}`} className="font-semibold text-cafe">Crear cuenta</Link>}
         </div>
       </form>
     </AuthShell>
@@ -336,7 +333,7 @@ export function Register() {
             <Field label="Presentación personal" optional><textarea className="field-input min-h-24" placeholder="Cuéntanos qué te gusta cocinar" value={f.bio} onChange={(e) => set('bio', e.target.value)} /></Field>
             <Field label="Tu cocina y ambiente" optional><textarea className="field-input min-h-24" value={f.home_description} onChange={(e) => set('home_description', e.target.value)} /></Field>
             <label className="flex items-start gap-3 text-sm">
-              <input type="checkbox" className="mt-1 h-4 w-4 accent-[#A3173B]" checked={f.show_home} onChange={(e) => set('show_home', e.target.checked)} />
+              <input type="checkbox" className="mt-1 h-4 w-4 accent-[#D33434]" checked={f.show_home} onChange={(e) => set('show_home', e.target.checked)} />
               Deseo mostrar la descripción de mi hogar públicamente
             </label>
           </div>

@@ -43,7 +43,7 @@ export function kitchenArt(seed = 1): string {
 <rect x="30" y="40" width="120" height="90" rx="6" fill="#fff" stroke="hsl(${h},30%,60%)" stroke-width="6"/>
 <rect x="200" y="120" width="170" height="70" rx="6" fill="hsl(${h},25%,55%)"/>
 <circle cx="250" cy="110" r="22" fill="#5a4a4a"/><circle cx="320" cy="110" r="18" fill="#7a6a6a"/>
-<rect x="60" y="150" width="80" height="40" rx="8" fill="#A3173B" opacity=".85"/>
+<rect x="60" y="150" width="80" height="40" rx="8" fill="#D33434" opacity=".85"/>
 </svg>`
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }

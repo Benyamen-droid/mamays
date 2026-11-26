@@ -30,7 +30,7 @@ export function MapView({ mamitas, onSelect, height = 260 }: { mamitas: MamitaPu
       pts.push(pos)
       const icon = L.divIcon({
         className: '',
-        html: `<div style="background:#A3173B;color:#fff;border:3px solid #fff;border-radius:999px;width:34px;height:34px;display:grid;place-items:center;font:700 14px Playfair Display,serif;box-shadow:0 4px 10px rgba(0,0,0,.3)">${(mm.full_name[0] || 'M').toUpperCase()}</div>`,
+        html: `<div style="background:#D33434;color:#fff;border:3px solid #fff;border-radius:999px;width:34px;height:34px;display:grid;place-items:center;font:700 14px Playfair Display,serif;box-shadow:0 4px 10px rgba(0,0,0,.3)">${(mm.full_name[0] || 'M').toUpperCase()}</div>`,
         iconSize: [34, 34], iconAnchor: [17, 17],
       })
       // Ventana del pin: datos de la mamita + botón para abrir en Google Maps (texto escapado)
@@ -39,7 +39,7 @@ export function MapView({ mamitas, onSelect, height = 260 }: { mamitas: MamitaPu
       const z = document.createElement('div'); z.textContent = `${mm.public_zone_label || mm.zone} · ${mm.dish_count} platitos hoy`
       const btn = document.createElement('button')
       btn.textContent = 'Abrir en Google Maps'
-      btn.style.cssText = 'margin-top:6px;background:#A3173B;color:#fff;border:0;border-radius:999px;padding:6px 10px;font-weight:700;font-size:12px'
+      btn.style.cssText = 'margin-top:6px;background:#D33434;color:#fff;border:0;border-radius:999px;padding:6px 10px;font-weight:700;font-size:12px'
       btn.onclick = () => openMapsSearch({ lat: pos[0], lng: pos[1] })
       box.append(b, z, btn)
       L.marker(pos, { icon, title: mm.full_name }).addTo(layer)
@@ -51,5 +51,5 @@ export function MapView({ mamitas, onSelect, height = 260 }: { mamitas: MamitaPu
     return () => { layer.remove() }
   }, [mamitas, onSelect])
 
-  return <div ref={el} style={{ height }} className="z-0 w-full overflow-hidden rounded-[20px] border border-borde" role="region" aria-label="Mapa de mamitas" />
+  return <div ref={el} style={{ height }} className="isolate relative z-0 w-full overflow-hidden rounded-[20px] border border-borde" role="region" aria-label="Mapa de mamitas" />
 }
