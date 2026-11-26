@@ -32,6 +32,14 @@ create table if not exists public.profiles (
   created_at        timestamptz not null default now()
 );
 
+-- onboarded: las cuentas que ya existían no ven la bienvenida; las nuevas sí
+do $$ begin
+  if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='profiles' and column_name='onboarded') then
+    alter table public.profiles add column onboarded boolean not null default true;
+    alter table public.profiles alter column onboarded set default false;
+  end if;
+end $$;
+
 alter table public.profiles enable row level security;
 
 drop policy if exists "perfil: leer el propio" on public.profiles;
@@ -123,6 +131,22 @@ create table if not exists public.dishes (
 
 create index if not exists dishes_mamita_idx on public.dishes(mamita_id);
 
+-- Extras / acompañamientos que la mamita ofrece con el plato: [{"id":"x1","name":"Gelatina","price":2}]
+create or replace function public.extras_validos(e jsonb) returns boolean
+language sql immutable as $$
+  select jsonb_typeof(e) = 'array' and jsonb_array_length(e) <= 10 and coalesce(bool_and(
+           jsonb_typeof(x) = 'object'
+           and length(coalesce(x->>'id','')) between 1 and 40
+           and length(trim(coalesce(x->>'name',''))) between 2 and 40
+           and (x->>'price') ~ '^[0-9]+(\.[0-9]{1,2})?$' and (x->>'price')::numeric <= 50
+         ), true)
+  from jsonb_array_elements(case when jsonb_typeof(e) = 'array' then e else '[]'::jsonb end) x
+$$;
+alter table public.dishes add column if not exists extras  jsonb   not null default '[]'::jsonb;
+alter table public.dishes add column if not exists dine_in boolean not null default false;  -- recibe comensales en su hogar
+alter table public.dishes drop constraint if exists extras_validos;
+alter table public.dishes add constraint extras_validos check (public.extras_validos(extras));
+
 alter table public.dishes enable row level security;
 
 drop policy if exists "platos: todos pueden ver" on public.dishes;
@@ -156,7 +180,7 @@ create table if not exists public.orders (
   status           text not null check (status in
                     ('reservado','enviado','aceptado','preparando','listo','en_camino',
                      'entregado','rechazado','cancelado','expirado')),
-  mode             text not null check (mode in ('delivery','recojo')),
+  mode             text not null,
   payment_method   text not null,
   subtotal         numeric(8,2) not null,
   delivery_cost    numeric(6,2) not null default 0,
@@ -185,6 +209,17 @@ alter table public.orders add column if not exists pickup_address text not null 
 alter table public.orders add column if not exists payment_id     text not null default '';
 alter table public.orders add column if not exists payment_detail text not null default '';
 alter table public.orders add column if not exists paid_at        timestamptz;
+-- Comer en el hogar de la mamita: comensales y aceptación de términos de seguridad y convivencia
+alter table public.orders add column if not exists guests            int not null default 1;
+alter table public.orders add column if not exists terms_accepted_at timestamptz;
+alter table public.orders add column if not exists terms_version     text not null default '';
+alter table public.orders drop constraint if exists orders_mode_check;
+alter table public.orders add constraint orders_mode_check check (mode in ('delivery','recojo','en_casa'));
+alter table public.orders drop constraint if exists orders_guests_check;
+alter table public.orders add constraint orders_guests_check check (guests between 1 and 6);
+alter table public.orders drop constraint if exists terminos_si_come_en_casa;
+alter table public.orders add constraint terminos_si_come_en_casa check (mode <> 'en_casa' or terms_accepted_at is not null);
+
 alter table public.orders drop constraint if exists orders_payment_method_check;
 update public.orders set payment_method = 'yape_manual' where payment_method = 'yape' and voucher_url <> '' and payment_id = '';
 alter table public.orders add constraint orders_payment_method_check
@@ -202,6 +237,9 @@ create table if not exists public.order_items (
   qty        int not null check (qty between 1 and 20),
   photo      text not null default ''
 );
+
+alter table public.order_items add column if not exists extras       jsonb not null default '[]'::jsonb;
+alter table public.order_items add column if not exists extras_total numeric(8,2) not null default 0;
 
 create index if not exists order_items_order_idx on public.order_items(order_id);
 create index if not exists order_items_dish_idx  on public.order_items(dish_id);
@@ -252,6 +290,42 @@ create policy "favoritos: los míos" on public.favorites for all
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- ---------------------------------------------------------------------
+-- 4b. RESEÑAS Y COMENTARIOS
+--   dish    → calificación del plato (compra verificada)
+--   mamita  → calificación de la mamá cocinera (compra verificada)
+--   comment → comentario libre en un plato (cualquier comensal)
+-- ---------------------------------------------------------------------
+create table if not exists public.reviews (
+  id          uuid primary key default gen_random_uuid(),
+  kind        text not null check (kind in ('dish','mamita','comment')),
+  dish_id     uuid references public.dishes(id) on delete cascade,
+  mamita_id   uuid not null references public.profiles(id) on delete cascade,
+  order_id    uuid references public.orders(id) on delete set null,
+  author_id   uuid not null references public.profiles(id) on delete cascade,
+  author_name text not null default '',
+  rating      int check (rating between 1 and 5),
+  body        text not null default '' check (length(body) <= 500),
+  verified    boolean not null default false,
+  reply       text not null default '' check (length(reply) <= 500),
+  replied_at  timestamptz,
+  created_at  timestamptz not null default now(),
+  constraint rating_segun_tipo check ((kind = 'comment' and rating is null) or (kind <> 'comment' and rating is not null)),
+  constraint plato_segun_tipo  check ((kind = 'mamita' and dish_id is null) or (kind <> 'mamita' and dish_id is not null))
+);
+create index if not exists reviews_dish_idx   on public.reviews(dish_id, created_at desc);
+create index if not exists reviews_mamita_idx on public.reviews(mamita_id, created_at desc);
+create unique index if not exists reviews_una_por_pedido
+  on public.reviews(order_id, kind, coalesce(dish_id, '00000000-0000-0000-0000-000000000000'::uuid))
+  where kind <> 'comment';
+
+alter table public.reviews enable row level security;
+drop policy if exists "reseñas: todos pueden leer" on public.reviews;
+create policy "reseñas: todos pueden leer" on public.reviews for select using (true);
+drop policy if exists "comentarios: borrar los míos" on public.reviews;
+create policy "comentarios: borrar los míos" on public.reviews for delete using (author_id = auth.uid() and kind = 'comment');
+-- crear y responder solo mediante funciones (ver más abajo)
+
+-- ---------------------------------------------------------------------
 -- 5. STOCK DEL DÍA (hora de Lima) Y VISTAS PÚBLICAS
 -- ---------------------------------------------------------------------
 create or replace function public.lima_today() returns date
@@ -271,7 +345,8 @@ language sql stable security definer set search_path = public as $$
     and (o.created_at at time zone 'America/Lima')::date = public.lima_today()
 $$;
 
-create or replace view public.dishes_view as
+drop view if exists public.dishes_view;
+create view public.dishes_view as
 select
   d.*,
   c.sold,
@@ -279,26 +354,23 @@ select
   greatest(d.portions - c.sold - c.reserved, 0) as available,
   p.full_name as mamita_name,
   p.zone      as mamita_zone,
-  (select round(avg(o.rating)::numeric, 1) from public.orders o
-     where o.mamita_id = d.mamita_id and o.rating is not null) as mamita_rating,
-  (select round(avg(o.rating)::numeric, 1) from public.orders o
-     join public.order_items oi on oi.order_id = o.id
-     where oi.dish_id = d.id and o.rating is not null) as rating
+  (select round(avg(r.rating)::numeric, 1) from public.reviews r where r.kind = 'mamita' and r.mamita_id = d.mamita_id) as mamita_rating,
+  (select round(avg(r.rating)::numeric, 1) from public.reviews r where r.kind = 'dish' and r.dish_id = d.id) as rating,
+  (select count(*) from public.reviews r where r.dish_id = d.id)::int as review_count
 from public.dishes d
 join public.profiles p on p.id = d.mamita_id
 cross join lateral public.dish_counts(d.id) c;
 
 -- Datos públicos de las mamitas (nunca expone la dirección privada ni el correo)
-create or replace view public.mamitas_public as
+drop view if exists public.mamitas_public;
+create view public.mamitas_public as
 select
   p.id, p.full_name, p.zone, p.public_zone_label, p.bio,
   case when p.show_home then p.home_description else '' end as home_description,
   case when p.show_home then p.home_photos else '{}'::text[] end as home_photos,
   p.avatar_url, p.yape_name, p.yape_phone, p.lat, p.lng,
-  (select round(avg(o.rating)::numeric, 1) from public.orders o
-     where o.mamita_id = p.id and o.rating is not null) as rating,
-  (select count(*) from public.orders o
-     where o.mamita_id = p.id and o.rating is not null)::int as rating_count,
+  (select round(avg(r.rating)::numeric, 1) from public.reviews r where r.kind = 'mamita' and r.mamita_id = p.id) as rating,
+  (select count(*) from public.reviews r where r.kind = 'mamita' and r.mamita_id = p.id)::int as rating_count,
   (select count(*) from public.dishes d where d.mamita_id = p.id and not d.paused)::int as dish_count
 from public.profiles p
 where p.role = 'mamita';
@@ -341,6 +413,11 @@ declare
   v_order    uuid;
   v_status   text;
   v_now      timestamptz := now();
+  v_guests   int := coalesce((p->>'guests')::int, 1);
+  v_ext      jsonb;
+  v_ext_tot  numeric;
+  v_ext_id   text;
+  v_found    jsonb;
 begin
   if v_uid is null then raise exception 'NO_AUTENTICADO'; end if;
   select * into v_me from public.profiles where id = v_uid;
@@ -349,7 +426,13 @@ begin
   select * into v_mamita from public.profiles where id = (p->>'mamita_id')::uuid and role = 'mamita';
   if not found then raise exception 'MAMITA_NO_EXISTE'; end if;
 
-  if v_mode not in ('delivery','recojo') then raise exception 'MODALIDAD_INVALIDA'; end if;
+  if v_mode not in ('delivery','recojo','en_casa') then raise exception 'MODALIDAD_INVALIDA'; end if;
+  if v_mode = 'en_casa' then
+    if coalesce((p->>'terms_accepted')::boolean, false) is not true then raise exception 'TERMINOS_REQUERIDOS'; end if;
+    if v_guests not between 1 and 6 then raise exception 'COMENSALES_INVALIDOS'; end if;
+  else
+    v_guests := 1;
+  end if;
   if v_pay  not in ('yape','tarjeta','yape_manual','efectivo') then raise exception 'PAGO_INVALIDO'; end if;
   if v_mode = 'delivery' and length(trim(coalesce(p->>'delivery_address',''))) < 5 then
     raise exception 'FALTA_DIRECCION';
@@ -369,7 +452,8 @@ begin
 
   insert into public.orders (code, comensal_id, comensal_name, mamita_id, mamita_name, status, mode,
                              payment_method, subtotal, delivery_cost, total, delivery_address,
-                             receiver_name, receiver_phone, payer_name, notes, reserved_until, history)
+                             receiver_name, receiver_phone, payer_name, notes, reserved_until, history,
+                             guests, terms_accepted_at, terms_version)
   values (v_code, v_uid, v_me.full_name, v_mamita.id, v_mamita.full_name, v_status, v_mode, v_pay,
           0, 0, 0,
           case when v_mode = 'delivery' then trim(p->>'delivery_address') else '' end,
@@ -378,7 +462,10 @@ begin
           coalesce(nullif(trim(p->>'payer_name'),''), v_me.full_name),
           left(coalesce(p->>'notes',''), 300),
           case when v_pay <> 'efectivo' then v_now + interval '15 minutes' end,
-          jsonb_build_array(jsonb_build_object('status', v_status, 'at', v_now)))
+          jsonb_build_array(jsonb_build_object('status', v_status, 'at', v_now)),
+          v_guests,
+          case when v_mode = 'en_casa' then v_now end,
+          case when v_mode = 'en_casa' then left(coalesce(p->>'terms_version', 'v1'), 20) else '' end)
   returning id into v_order;
 
   for v_item in select * from jsonb_array_elements(p->'items') loop
@@ -394,14 +481,26 @@ begin
       raise exception 'SOLO_RECOJO:%', v_dish.name; end if;
     if v_mode = 'recojo' and v_dish.delivery_mode = 'delivery' then
       raise exception 'SOLO_DELIVERY:%', v_dish.name; end if;
+    if v_mode = 'en_casa' and not v_dish.dine_in then
+      raise exception 'SIN_COMER_EN_CASA:%', v_dish.name; end if;
+
+    -- Extras elegidos: se validan contra los que ofrece la mamita y el precio sale de la base de datos
+    v_ext := '[]'::jsonb; v_ext_tot := 0;
+    for v_ext_id in select jsonb_array_elements_text(coalesce(v_item->'extras', '[]'::jsonb)) loop
+      select x into v_found from jsonb_array_elements(v_dish.extras) x where x->>'id' = v_ext_id;
+      if v_found is null then raise exception 'EXTRA_INVALIDO:%', v_dish.name; end if;
+      if v_ext @> jsonb_build_array(jsonb_build_object('id', v_ext_id)) then continue; end if;
+      v_ext := v_ext || jsonb_build_array(jsonb_build_object('id', v_ext_id, 'name', v_found->>'name', 'price', (v_found->>'price')::numeric));
+      v_ext_tot := v_ext_tot + (v_found->>'price')::numeric;
+    end loop;
 
     select v_dish.portions - c.sold - c.reserved into v_avail from public.dish_counts(v_dish.id) c;
     if v_qty > v_avail then raise exception 'SIN_STOCK:%', v_dish.name; end if;
 
-    insert into public.order_items(order_id, dish_id, dish_name, unit_price, qty, photo)
-    values (v_order, v_dish.id, v_dish.name, v_dish.price, v_qty, coalesce(v_dish.photos[1], ''));
+    insert into public.order_items(order_id, dish_id, dish_name, unit_price, qty, photo, extras, extras_total)
+    values (v_order, v_dish.id, v_dish.name, v_dish.price, v_qty, coalesce(v_dish.photos[1], ''), v_ext, v_ext_tot);
 
-    v_sub := v_sub + v_dish.price * v_qty;
+    v_sub := v_sub + (v_dish.price + v_ext_tot) * v_qty;
     if v_mode = 'delivery' then v_deliv := greatest(v_deliv, coalesce(v_dish.delivery_cost, 0)); end if;
   end loop;
 
@@ -466,7 +565,7 @@ begin
      set status = p_status,
          history = history || jsonb_build_array(jsonb_build_object('status',p_status,'at',now(),'reason',coalesce(p_reason,''))),
          pickup_address = case
-           when p_status = 'aceptado' and v.mode = 'recojo'
+           when p_status = 'aceptado' and v.mode in ('recojo','en_casa')
              then (select address from public.profiles where id = v.mamita_id)
            else pickup_address end
    where id = p_order;
@@ -474,7 +573,7 @@ begin
   v_msg := case p_status
     when 'aceptado'   then '¡La mamita aceptó tu pedido! Ya verificó tu pago.'
     when 'preparando' then 'Tu almuerzo se está preparando con mucho cariño.'
-    when 'listo'      then 'Tu pedido está listo para recojo.'
+    when 'listo'      then case when v.mode = 'en_casa' then '¡Tu mesa está lista! La mamita te espera.' else 'Tu pedido está listo para recojo.' end
     when 'en_camino'  then 'Tu pedido va en camino.'
     when 'entregado'  then '¡Buen provecho! Cuéntanos qué tal estuvo.'
     when 'rechazado'  then 'La mamita no pudo aceptar tu pedido. ' || coalesce(p_reason,'')
@@ -527,28 +626,88 @@ revoke all on function public.confirm_online_payment(uuid,text,text)   from publ
 grant execute on function public.register_payment_attempt(uuid,text,text) to service_role;
 grant execute on function public.confirm_online_payment(uuid,text,text)   to service_role;
 
-create or replace function public.rate_order(p_order uuid, p_rating int, p_review text default '')
+drop function if exists public.rate_order(uuid,int,text);
+
+-- Calificación tras la entrega: la mamita (obligatorio) y cada plato del pedido
+create or replace function public.submit_reviews(p_order uuid, p jsonb)
 returns void language plpgsql security definer set search_path = public as $$
-declare v public.orders%rowtype;
+declare
+  v    public.orders%rowtype;
+  v_r  int := (p->'mamita'->>'rating')::int;
+  d    jsonb;
+  v_dr int;
 begin
   select * into v from public.orders where id = p_order for update;
   if not found or v.comensal_id <> auth.uid() then raise exception 'PEDIDO_NO_EXISTE'; end if;
   if v.status <> 'entregado' then raise exception 'AUN_NO_ENTREGADO'; end if;
   if v.rating is not null then raise exception 'YA_VALORADO'; end if;
-  if p_rating not between 1 and 5 then raise exception 'VALORACION_INVALIDA'; end if;
-  update public.orders set rating = p_rating, review = left(coalesce(p_review,''), 400) where id = p_order;
-  perform public.notify(v.mamita_id, 'Nueva valoración ★' || p_rating, v.comensal_name || ' valoró su pedido ' || v.code || '.', p_order);
+  if v_r is null or v_r not between 1 and 5 then raise exception 'VALORACION_INVALIDA'; end if;
+
+  insert into public.reviews(kind, mamita_id, order_id, author_id, author_name, rating, body, verified)
+  values ('mamita', v.mamita_id, v.id, v.comensal_id, v.comensal_name, v_r, left(coalesce(p->'mamita'->>'body',''), 500), true);
+
+  for d in select * from jsonb_array_elements(coalesce(p->'dishes', '[]'::jsonb)) loop
+    v_dr := (d->>'rating')::int;
+    if v_dr is null or v_dr not between 1 and 5 then raise exception 'VALORACION_INVALIDA'; end if;
+    if not exists (select 1 from public.order_items i where i.order_id = v.id and i.dish_id = (d->>'dish_id')::uuid) then
+      raise exception 'PLATO_NO_ESTA_EN_EL_PEDIDO';
+    end if;
+    insert into public.reviews(kind, dish_id, mamita_id, order_id, author_id, author_name, rating, body, verified)
+    values ('dish', (d->>'dish_id')::uuid, v.mamita_id, v.id, v.comensal_id, v.comensal_name, v_dr, left(coalesce(d->>'body',''), 500), true);
+  end loop;
+
+  update public.orders set rating = v_r, review = left(coalesce(p->'mamita'->>'body',''), 400) where id = p_order;
+  perform public.notify(v.mamita_id, 'Nueva calificación ★' || v_r, v.comensal_name || ' calificó su pedido ' || v.code || '.', p_order);
+end $$;
+
+-- Comentario libre en un plato (máx. 10 por día por persona)
+create or replace function public.add_comment(p_dish uuid, p_body text)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare v_me public.profiles%rowtype; v_dish public.dishes%rowtype; v_id uuid;
+begin
+  select * into v_me from public.profiles where id = auth.uid();
+  if v_me.role is distinct from 'comensal' then raise exception 'SOLO_COMENSALES'; end if;
+  select * into v_dish from public.dishes where id = p_dish;
+  if not found then raise exception 'PLATO_NO_EXISTE'; end if;
+  if length(trim(coalesce(p_body,''))) < 2 then raise exception 'COMENTARIO_VACIO'; end if;
+  if (select count(*) from public.reviews where author_id = v_me.id and kind = 'comment' and created_at > now() - interval '1 day') >= 10 then
+    raise exception 'DEMASIADOS_COMENTARIOS';
+  end if;
+  insert into public.reviews(kind, dish_id, mamita_id, author_id, author_name, body, verified)
+  values ('comment', v_dish.id, v_dish.mamita_id, v_me.id, v_me.full_name, left(trim(p_body), 500),
+          exists (select 1 from public.orders o join public.order_items i on i.order_id = o.id
+                   where o.comensal_id = v_me.id and o.status = 'entregado' and i.dish_id = v_dish.id))
+  returning id into v_id;
+  perform public.notify(v_dish.mamita_id, 'Nuevo comentario en ' || v_dish.name, v_me.full_name || ': ' || left(trim(p_body), 80), null);
+  return v_id;
+end $$;
+
+-- La mamita responde una reseña o comentario sobre ella o sus platos
+create or replace function public.reply_review(p_review uuid, p_reply text)
+returns void language plpgsql security definer set search_path = public as $$
+declare r public.reviews%rowtype;
+begin
+  select * into r from public.reviews where id = p_review for update;
+  if not found or r.mamita_id <> auth.uid() then raise exception 'RESENA_NO_EXISTE'; end if;
+  update public.reviews set reply = left(trim(coalesce(p_reply,'')), 500), replied_at = now() where id = p_review;
+  if length(trim(coalesce(p_reply,''))) > 0 then
+    perform public.notify(r.author_id, 'La mamita respondió tu comentario', left(trim(p_reply), 120), r.order_id);
+  end if;
 end $$;
 
 revoke all on function public.place_order(jsonb)                  from public, anon;
 revoke all on function public.submit_voucher(uuid,text)           from public, anon;
 revoke all on function public.set_order_status(uuid,text,text)    from public, anon;
-revoke all on function public.rate_order(uuid,int,text)           from public, anon;
+revoke all on function public.submit_reviews(uuid,jsonb)          from public, anon;
+revoke all on function public.add_comment(uuid,text)              from public, anon;
+revoke all on function public.reply_review(uuid,text)             from public, anon;
 revoke all on function public.expire_reservations()               from public, anon;
 grant execute on function public.place_order(jsonb)               to authenticated;
 grant execute on function public.submit_voucher(uuid,text)        to authenticated;
 grant execute on function public.set_order_status(uuid,text,text) to authenticated;
-grant execute on function public.rate_order(uuid,int,text)        to authenticated;
+grant execute on function public.submit_reviews(uuid,jsonb)       to authenticated;
+grant execute on function public.add_comment(uuid,text)           to authenticated;
+grant execute on function public.reply_review(uuid,text)          to authenticated;
 grant execute on function public.expire_reservations()            to authenticated;
 
 -- ---------------------------------------------------------------------

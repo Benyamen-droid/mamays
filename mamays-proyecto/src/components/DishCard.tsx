@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { ChevronRight, Heart, Timer, TriangleAlert } from 'lucide-react'
 import type { DishView } from '../lib/types'
 import { estadoHorario, horarioCorto, soles } from '../lib/format'
+import { horarioPreset } from '../lib/constants'
 import { DishPhoto, Stars, Tag } from './ui'
 
 export function dishTags(d: DishView, alergiasUsuario: string[] = []) {
@@ -11,8 +12,11 @@ export function dishTags(d: DishView, alergiasUsuario: string[] = []) {
   for (const t of d.tags) tags.push({ label: t })
   if (d.delivery_mode !== 'recojo') tags.push({ label: 'Delivery' })
   if (d.delivery_mode !== 'delivery') tags.push({ label: 'Recojo' })
-  // las alergias del usuario primero
-  return tags.sort((a, b) => Number(alergiasUsuario.includes(b.label)) - Number(alergiasUsuario.includes(a.label)))
+  if (d.dine_in) tags.push({ label: 'Comer en el hogar' })
+  if (d.extras?.length) tags.push({ label: `${d.extras.length} extras` })
+  // primero las alergias del usuario, luego "Comer en el hogar" (es una modalidad que conviene ver de un vistazo)
+  const prio = (t: { label: string }) => (alergiasUsuario.includes(t.label) ? 2 : t.label === 'Comer en el hogar' ? 1 : 0)
+  return tags.sort((a, b) => prio(b) - prio(a))
 }
 
 export function DishCard({ d, fav, onFav, userAllergies = [] }: { d: DishView; fav: boolean; onFav: () => void; userAllergies?: string[] }) {
@@ -53,7 +57,7 @@ export function DishCard({ d, fav, onFav, userAllergies = [] }: { d: DishView; f
         </div>
         {d.available_from && (
           <div className={`mt-1 inline-flex items-center gap-1 whitespace-nowrap text-[10.5px] font-semibold ${h.abierto ? 'text-ok' : 'text-gris'}`}>
-            <Timer size={12} /> {horarioCorto(d.available_from, d.available_to)}
+            <Timer size={12} /> {horarioPreset(d.available_from, d.available_to)?.id === 'tarde' ? 'Toda la tarde · ' : ''}{horarioCorto(d.available_from, d.available_to)}
           </div>
         )}
         <div className="mb-3 mt-2 flex flex-wrap gap-1">

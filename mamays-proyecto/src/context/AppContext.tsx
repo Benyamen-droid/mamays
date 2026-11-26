@@ -18,11 +18,13 @@ interface CartCtx {
   mamitaId: string | null
   lines: CartLine[]
   count: number
-  add: (dishId: string, mamitaId: string, qty: number) => 'ok' | 'otra-mamita'
-  setQty: (dishId: string, qty: number) => void
+  /** mismo plato con distintos extras = líneas distintas */
+  add: (dishId: string, mamitaId: string, qty: number, extras?: string[]) => 'ok' | 'otra-mamita'
+  setQty: (key: string, qty: number) => void
   clear: () => void
-  replaceWith: (dishId: string, mamitaId: string, qty: number) => void
+  replaceWith: (dishId: string, mamitaId: string, qty: number, extras?: string[]) => void
 }
+export const lineKey = (l: CartLine) => `${l.dish_id}|${[...(l.extras ?? [])].sort().join(',')}`
 const Cart = createContext<CartCtx>(null!)
 export const useCart = () => useContext(Cart)
 
@@ -58,23 +60,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     mamitaId: cart.mamitaId,
     lines: cart.lines,
     count: cart.lines.reduce((a, l) => a + l.qty, 0),
-    add(dishId, mamitaId, qty) {
+    add(dishId, mamitaId, qty, extras = []) {
       if (cart.mamitaId && cart.mamitaId !== mamitaId && cart.lines.length) return 'otra-mamita'
       setCart((c) => {
-        const ex = c.lines.find((l) => l.dish_id === dishId)
-        const lines = ex ? c.lines.map((l) => (l.dish_id === dishId ? { ...l, qty: Math.min(20, l.qty + qty) } : l)) : [...c.lines, { dish_id: dishId, qty }]
+        const nueva = { dish_id: dishId, qty, extras: [...extras].sort() }
+        const k = lineKey(nueva)
+        const ex = c.lines.find((l) => lineKey(l) === k)
+        const lines = ex ? c.lines.map((l) => (lineKey(l) === k ? { ...l, qty: Math.min(20, l.qty + qty) } : l)) : [...c.lines, nueva]
         return { mamitaId, lines }
       })
       return 'ok'
     },
-    setQty(dishId, qty) {
+    setQty(key, qty) {
       setCart((c) => {
-        const lines = qty <= 0 ? c.lines.filter((l) => l.dish_id !== dishId) : c.lines.map((l) => (l.dish_id === dishId ? { ...l, qty } : l))
+        const lines = qty <= 0 ? c.lines.filter((l) => lineKey(l) !== key) : c.lines.map((l) => (lineKey(l) === key ? { ...l, qty } : l))
         return { mamitaId: lines.length ? c.mamitaId : null, lines }
       })
     },
     clear() { setCart({ mamitaId: null, lines: [] }) },
-    replaceWith(dishId, mamitaId, qty) { setCart({ mamitaId, lines: [{ dish_id: dishId, qty }] }) },
+    replaceWith(dishId, mamitaId, qty, extras = []) { setCart({ mamitaId, lines: [{ dish_id: dishId, qty, extras: [...extras].sort() }] }) },
   }), [cart])
 
   // toasts

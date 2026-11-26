@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Heart, Map as MapIcon, MapPin, Search, ShieldAlert, Target, Timer, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Heart, Map as MapIcon, MapPin, Rotate3d, Search, ShieldAlert, Target, Timer, X } from 'lucide-react'
 import { api, mensajeError } from '../../data'
 import { useAuth, useCart, useToast } from '../../context/AppContext'
-import { ACTIVE_STATUSES, CATEGORIAS, STATUS_LABEL } from '../../lib/constants'
-import type { DishView, MamitaPublic, Order } from '../../lib/types'
+import { ACTIVE_STATUSES, CATEGORIAS, STATUS_LABEL, horarioPreset } from '../../lib/constants'
+import { openMapsSearch } from '../../lib/maps'
+import { DishComments, ReviewItem } from '../../components/reviews'
+const Dish3DViewer = lazy(() => import('../../components/Dish3D'))
+import type { DishView, MamitaPublic, Order, Review } from '../../lib/types'
 import { estadoHorario, horarioTexto, primerNombre, soles } from '../../lib/format'
 import { DishCard, dishTags } from '../../components/DishCard'
 import { MapView } from '../../components/MapView'
@@ -116,7 +119,10 @@ export function ComensalHome() {
         <MapIcon size={18} /> {showMap ? 'Ocultar mapa' : 'Ver mapa'}
       </button>
       {showMap && <div className="mt-3"><MapView mamitas={mamitasMapa} onSelect={onSelectMap} />
-        <p className="mt-1.5 text-center text-[11px] text-gris">Se muestra la zona aproximada de cada mamita. Toca un punto para ver sus platos.</p></div>}
+        <p className="mt-1.5 text-center text-[11px] text-gris">Zona aproximada de cada mamita. Toca un punto para ver sus platos o abrirlo en Google Maps.</p>
+        <button onClick={() => openMapsSearch({ query: zona || 'Puno' })} className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-borde bg-white py-3 text-sm font-bold text-cafe">
+          <MapPin size={16} className="text-guinda" /> Abrir {zona || 'Puno'} en Google Maps
+        </button></div>}
 
       <div className="mt-7 flex items-end justify-between">
         <div>
@@ -167,33 +173,48 @@ export function DishDetail() {
   const { toast } = useToast()
   const { favs, toggle } = useFavorites()
   const [d, setD] = useState<DishView | null | undefined>(undefined)
+  const [mamita, setMamita] = useState<MamitaPublic | null>(null)
   const [qty, setQty] = useState(1)
   const [photo, setPhoto] = useState(0)
+  const [extras, setExtras] = useState<string[]>([])
   const [conflict, setConflict] = useState(false)
   const [allergyOpen, setAllergyOpen] = useState(false)
-  const [confirmRisk, setConfirmRisk] = useState(false)
+  const [confirmAllergens, setConfirmAllergens] = useState(false)
   const [riskChecked, setRiskChecked] = useState(false)
+  const [show3d, setShow3d] = useState(false)
   const misAlergias = profile?.allergies ?? []
-  // Al abrir un plato con alérgenos del usuario, aparece la advertencia de inmediato
+
+  useEffect(() => {
+    api.getDish(id!).then((x) => {
+      setD(x)
+      if (x) api.getMamita(x.mamita_id).then(setMamita).catch(() => {})
+    }).catch(() => setD(null))
+  }, [id])
+  // Al abrir un plato con alérgenos del usuario, aparece de inmediato la advertencia
   useEffect(() => {
     if (d && d.allergens.some((a) => misAlergias.includes(a))) setAllergyOpen(true)
   }, [d]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { api.getDish(id!).then(setD).catch(() => setD(null)) }, [id])
   if (d === undefined) return <Screen><Loading /></Screen>
   if (d === null) return <Screen><EmptyState icon={<X />} title="Este plato ya no está" text="Puede que la mamita lo haya retirado." action={<Button onClick={() => nav('/comensal')}>Volver al menú</Button>} /></Screen>
 
-  const alergias = misAlergias
-  const choque = d.allergens.filter((a) => alergias.includes(a))
+  const choque = d.allergens.filter((a) => misAlergias.includes(a))
   const agotado = d.available === 0
   const h = estadoHorario(d.available_from, d.available_to)
+  const preset = horarioPreset(d.available_from, d.available_to)
   const maxQty = Math.max(1, Math.min(d.available, 20))
-  const entrega = d.delivery_mode === 'ambos' ? 'Delivery y recojo' : d.delivery_mode === 'delivery' ? 'Solo delivery' : 'Solo recojo'
+  const modos = [d.delivery_mode !== 'recojo' && 'Delivery', d.delivery_mode !== 'delivery' && 'Recojo', d.dine_in && 'Comer en el hogar'].filter(Boolean).join(' · ')
+  const extrasSel = d.extras.filter((x) => extras.includes(x.id))
+  const unit = d.price + extrasSel.reduce((a, x) => a + x.price, 0)
 
-  function add(force = false) {
+  // Al pedir: SIEMPRE se muestran los alérgenos del plato (y con más fuerza si son del usuario)
+  function pedir() {
+    if (d!.allergens.length > 0) { setRiskChecked(false); setConfirmAllergens(true); return }
+    agregar()
+  }
+  function agregar() {
     if (!d) return
-    if (choque.length > 0 && !force) { setRiskChecked(false); setConfirmRisk(true); return }
-    const r = cart.add(d.id, d.mamita_id, qty)
+    const r = cart.add(d.id, d.mamita_id, qty, extras)
     if (r === 'otra-mamita') return setConflict(true)
     toast(`${qty} × ${d.name} en tu carrito`)
     nav('/comensal/carrito')
@@ -207,8 +228,11 @@ export function DishDetail() {
         <button onClick={() => toggle(d.id)} aria-label="Favorito" aria-pressed={favs.includes(d.id)} className="absolute right-4 top-4 grid h-11 w-11 place-items-center rounded-full bg-white/95 text-guinda shadow">
           <Heart fill={favs.includes(d.id) ? 'currentColor' : 'none'} />
         </button>
-        {d.photos.length > 0 && <span className="absolute bottom-3 right-3 rounded-full bg-black/55 px-3 py-1 text-[11px] text-white">Vista {photo + 1} de {d.photos.length} · toca para cambiar</span>}
-        {agotado && <div className="absolute inset-0 grid place-items-center bg-guinda/75"><span className="rounded-full border border-white/70 px-4 py-1.5 font-extrabold tracking-[0.25em] text-white">AGOTADO</span></div>}
+        <button onClick={() => setShow3d(true)} className="absolute bottom-3 left-3 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3.5 py-2 text-[13px] font-extrabold text-guinda shadow-lg">
+          <Rotate3d size={17} /> Ver en 3D
+        </button>
+        {d.photos.length > 1 && <span className="absolute bottom-3 right-3 rounded-full bg-black/55 px-3 py-1 text-[11px] text-white">Foto {photo + 1} de {d.photos.length}</span>}
+        {agotado && <div className="pointer-events-none absolute inset-0 grid place-items-center bg-guinda/75"><span className="rounded-full border border-white/70 px-4 py-1.5 font-extrabold tracking-[0.25em] text-white">AGOTADO</span></div>}
       </div>
 
       <div className="px-5 pb-40 pt-5">
@@ -221,18 +245,40 @@ export function DishDetail() {
         <Eyebrow>¡Mira qué rico se ve!</Eyebrow>
         <div className="mt-1.5 flex items-start justify-between gap-3">
           <h1 className="font-serif text-[34px] font-bold leading-[1.05]">{d.name}</h1>
-          <div className="pt-1 text-[22px] font-extrabold text-guinda">{soles(d.price)}</div>
+          <div className="whitespace-nowrap pt-1 text-[22px] font-extrabold text-guinda">{soles(d.price)}</div>
         </div>
-        <Stars value={d.rating ?? d.mamita_rating} className="mt-1 block" />
+        <div className="mt-1 flex items-center gap-2 text-xs text-gris">
+          <Stars value={d.rating ?? d.mamita_rating} />
+          <a href="#comentarios" className="font-semibold text-guinda underline">{d.review_count} {d.review_count === 1 ? 'comentario' : 'comentarios'}</a>
+        </div>
         {d.description && <p className="mt-3 text-[15px] text-gris">{d.description}</p>}
 
         <div className={`mt-4 flex items-start gap-3 rounded-2xl px-4 py-3 ${h.abierto ? 'bg-[#e8f5ee] text-ok' : 'bg-crema-200 text-cafe'}`}>
           <Timer size={20} className="mt-0.5 shrink-0" />
           <div>
-            <div className="text-sm font-bold">Horario de hoy: {horarioTexto(d.available_from, d.available_to)}</div>
+            <div className="text-sm font-bold">{preset ? `${preset.label}: ` : 'Horario de hoy: '}{horarioTexto(d.available_from, d.available_to)}</div>
             {h.texto && <div className="text-xs">{h.abierto ? h.texto : `${h.texto}. Puedes pedir, pero confirma con la mamita.`}</div>}
           </div>
         </div>
+
+        {d.extras.length > 0 && (
+          <fieldset className="mt-5 rounded-[20px] border border-borde bg-white p-4">
+            <legend className="px-2 font-serif text-lg font-bold">Agrega extras</legend>
+            <p className="-mt-1 mb-2 text-xs text-gris">Acompañamientos que ofrece {primerNombre(d.mamita_name)} para este plato</p>
+            <div className="space-y-2">
+              {d.extras.map((x) => {
+                const on = extras.includes(x.id)
+                return (
+                  <label key={x.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 ${on ? 'border-guinda bg-guinda-50' : 'border-borde'}`}>
+                    <input type="checkbox" className="h-5 w-5 accent-[#A3173B]" checked={on} onChange={() => setExtras(on ? extras.filter((e) => e !== x.id) : [...extras, x.id])} />
+                    <span className="flex-1 text-sm font-semibold">{x.name}</span>
+                    <span className="whitespace-nowrap text-sm font-bold text-guinda">+ {soles(x.price)}</span>
+                  </label>
+                )
+              })}
+            </div>
+          </fieldset>
+        )}
 
         <hr className="my-5 border-borde" />
         <Eyebrow>Información alimentaria</Eyebrow>
@@ -246,9 +292,9 @@ export function DishDetail() {
           <div className="mt-1 text-sm font-bold">{d.allergens.length ? d.allergens.join(' · ') : 'Ninguno declarado'}</div>
           <p className="mt-2 text-[13px] text-gris">Puede existir contacto cruzado en una cocina doméstica. Si tienes una alergia o intolerancia, consulta directamente con la mamita antes de pedir.</p>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2">{dishTags(d, alergias).map((t) => <Tag key={t.label} label={t.label} alert={t.alert} />)}</div>
+        <div className="mt-4 flex flex-wrap gap-2">{dishTags(d, misAlergias).map((t) => <Tag key={t.label} label={t.label} alert={t.alert} />)}</div>
         <div className="mt-4 grid grid-cols-3 gap-2">
-          {[['Categoría', d.category], ['Conservación', d.conservation || (d.tags.filter((t) => /recalentar|fresco/i.test(t)).join(' · ') || 'No declarada')], ['Entrega', entrega + (d.delivery_mode !== 'recojo' && d.delivery_cost != null ? ` · delivery ${soles(d.delivery_cost)}` : '')]].map(([k, v]) => (
+          {[['Categoría', d.category], ['Conservación', d.conservation || (d.tags.filter((t) => /recalentar|fresco/i.test(t)).join(' · ') || 'No declarada')], ['Entrega', modos + (d.delivery_mode !== 'recojo' && d.delivery_cost != null ? ` · delivery ${soles(d.delivery_cost)}` : '')]].map(([k, v]) => (
             <div key={k} className="rounded-2xl border border-borde bg-white p-3"><div className="text-[11px] text-gris">{k}</div><div className="mt-0.5 text-[13px] font-semibold leading-snug">{v}</div></div>
           ))}
         </div>
@@ -264,23 +310,37 @@ export function DishDetail() {
           {d.reserved > 0 && <p className="mt-2 text-[11px] text-gris">{d.reserved} reservada(s) por otros comensales en este momento.</p>}
         </div>
 
-        <Link to={`/comensal/mamita/${d.mamita_id}`} className="mt-4 flex items-center gap-3 rounded-[20px] border border-borde bg-white p-4">
-          <Avatar name={d.mamita_name} size={52} />
-          <div className="flex-1">
-            <div className="text-[11px] text-gris">Conoce a quien lo preparó</div>
-            <div className="font-bold">{d.mamita_name}</div>
-            <div className="text-xs text-gris"><Stars value={d.mamita_rating} /> · {d.mamita_zone}</div>
-          </div>
-          <ChevronRight />
-        </Link>
+        <div className="mt-4 rounded-[20px] border border-borde bg-white p-4">
+          <Link to={`/comensal/mamita/${d.mamita_id}`} className="flex items-center gap-3">
+            <Avatar name={d.mamita_name} url={mamita?.avatar_url} size={52} />
+            <div className="flex-1">
+              <div className="text-[11px] text-gris">Conoce a quien lo preparó</div>
+              <div className="font-bold">{d.mamita_name}</div>
+              <div className="text-xs text-gris"><Stars value={d.mamita_rating} /> · {mamita?.public_zone_label || d.mamita_zone}</div>
+            </div>
+            <ChevronRight />
+          </Link>
+          <button onClick={() => openMapsSearch(mamita?.lat != null ? { lat: mamita.lat, lng: mamita.lng } : { query: d.mamita_zone })}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-crema py-2.5 text-sm font-bold text-cafe">
+            <MapPin size={16} className="text-guinda" /> Ver zona en Google Maps
+          </button>
+        </div>
+
+        <DishComments dishId={d.id} />
       </div>
 
       <div className="fixed inset-x-0 bottom-0 z-30 mx-auto flex max-w-[480px] items-center gap-3 border-t border-borde bg-white px-5 py-3 safe-bottom">
         <Stepper value={qty} onChange={setQty} max={maxQty} />
-        <Button onClick={() => add()} disabled={agotado} className="flex-1">
-          <span className="whitespace-nowrap">{agotado ? 'AGOTADO' : qty > 1 ? `Agregar · ${soles(d.price * qty)}` : '¡Agregar a mi carrito!'}</span>
+        <Button onClick={pedir} disabled={agotado} className="flex-1">
+          <span className="whitespace-nowrap">{agotado ? 'AGOTADO' : `Agregar · ${soles(unit * qty)}`}</span>
         </Button>
       </div>
+
+      {show3d && (
+        <Suspense fallback={<div className="fixed inset-0 z-[70] grid place-items-center bg-[#1c1416] text-sm text-white/80">Preparando la vista 3D…</div>}>
+          <Dish3DViewer src={d.photos[0]} name={d.name} onClose={() => setShow3d(false)} />
+        </Suspense>
+      )}
 
       {allergyOpen && choque.length > 0 && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-6" role="alertdialog" aria-modal="true" aria-labelledby="alerta-alergia">
@@ -307,25 +367,33 @@ export function DishDetail() {
         </div>
       )}
 
-      <Sheet open={confirmRisk} onClose={() => setConfirmRisk(false)} title="Confirma antes de agregar">
-        <div className="flex gap-3 rounded-2xl bg-[#fde8e8] p-3.5 text-sm text-[#8f1f1f]">
+      <Sheet open={confirmAllergens} onClose={() => setConfirmAllergens(false)} title={choque.length ? 'Confirma antes de agregar' : 'Alérgenos de este plato'}>
+        <div className={`flex gap-3 rounded-2xl p-3.5 text-sm ${choque.length ? 'bg-[#fde8e8] text-[#8f1f1f]' : 'bg-[#fff4ea] text-[#7a3d0c]'}`}>
           <ShieldAlert className="shrink-0" />
-          <div>Vas a pedir un plato con <b>{choque.join(', ')}</b>, que marcaste en tus alergias.</div>
+          <div>
+            <b>{d.name}</b> contiene: <b>{d.allergens.join(', ')}</b>.
+            {choque.length > 0 ? <> Marcaste <b>{choque.join(', ')}</b> en tus alergias.</> : ' Si tú o quien lo comerá es alérgico a alguno, no lo pidas o consulta con la mamita.'}
+          </div>
         </div>
-        <label className="mt-4 flex items-start gap-3 text-sm">
-          <input type="checkbox" className="mt-1 h-5 w-5 accent-[#A3173B]" checked={riskChecked} onChange={(e) => setRiskChecked(e.target.checked)} />
-          Entiendo el riesgo y confirmo que este pedido es seguro para quien lo va a comer (por ejemplo, es para otra persona).
-        </label>
+        <div className="mt-3 flex flex-wrap gap-2">{d.allergens.map((a) => <Tag key={a} label={a} alert />)}</div>
+        {choque.length > 0 && (
+          <label className="mt-4 flex items-start gap-3 text-sm">
+            <input type="checkbox" className="mt-1 h-5 w-5 accent-[#A3173B]" checked={riskChecked} onChange={(e) => setRiskChecked(e.target.checked)} />
+            Entiendo el riesgo y confirmo que este pedido es seguro para quien lo va a comer (por ejemplo, es para otra persona).
+          </label>
+        )}
         <div className="mt-5 space-y-2">
-          <Button disabled={!riskChecked} onClick={() => { setConfirmRisk(false); add(true) }}>Agregar de todos modos</Button>
-          <Button variant="secondary" onClick={() => setConfirmRisk(false)}>Mejor no</Button>
+          <Button disabled={choque.length > 0 && !riskChecked} onClick={() => { setConfirmAllergens(false); agregar() }}>
+            {choque.length ? 'Agregar de todos modos' : 'Entendido, agregar al carrito'}
+          </Button>
+          <Button variant="secondary" onClick={() => setConfirmAllergens(false)}>Mejor no</Button>
         </div>
       </Sheet>
 
       <Sheet open={conflict} onClose={() => setConflict(false)} title="Tu carrito es de otra mamita">
         <p className="text-sm text-gris">Cada pedido se prepara en una sola cocina. ¿Quieres vaciar tu carrito y empezar uno nuevo con {d.name}?</p>
         <div className="mt-5 space-y-2">
-          <Button onClick={() => { cart.replaceWith(d.id, d.mamita_id, qty); setConflict(false); nav('/comensal/carrito') }}>Vaciar y agregar</Button>
+          <Button onClick={() => { cart.replaceWith(d.id, d.mamita_id, qty, extras); setConflict(false); nav('/comensal/carrito') }}>Vaciar y agregar</Button>
           <Button variant="secondary" onClick={() => setConflict(false)}>Mantener mi carrito</Button>
         </div>
       </Sheet>
@@ -339,10 +407,12 @@ export function MamitaPublicPage() {
   const { profile } = useAuth()
   const [m, setM] = useState<MamitaPublic | null | undefined>(undefined)
   const [dishes, setDishes] = useState<DishView[]>([])
+  const [reviews, setReviews] = useState<Review[]>([])
   const { favs, toggle } = useFavorites()
   useEffect(() => {
     api.getMamita(id!).then(setM).catch(() => setM(null))
     api.listDishes().then((ds) => setDishes(ds.filter((d) => d.mamita_id === id))).catch(() => {})
+    api.listReviews({ mamitaId: id! }).then((r) => setReviews(r.filter((x) => x.kind === 'mamita'))).catch(() => {})
   }, [id])
   if (m === undefined) return <Screen><Loading /></Screen>
   if (!m) return <Screen><EmptyState icon={<X />} title="No encontramos a esta mamita" text="" /></Screen>
@@ -357,6 +427,10 @@ export function MamitaPublicPage() {
         <h1 className="mt-1 font-serif text-[32px] font-bold leading-tight">{m.full_name}</h1>
         <div className="mt-1 text-sm text-gris"><Stars value={m.rating} count={m.rating_count} /> · <MapPin size={13} className="inline" /> {m.public_zone_label || m.zone}</div>
         {m.bio && <p className="mt-3 text-[15px] text-gris">{m.bio}</p>}
+        <button onClick={() => openMapsSearch(m.lat != null ? { lat: m.lat, lng: m.lng } : { query: m.zone })}
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-borde bg-white py-3 text-sm font-bold text-cafe">
+          <MapPin size={16} className="text-guinda" /> Ver su zona en Google Maps
+        </button>
         {(m.home_description || m.home_photos.length > 0) && (
           <Card tone="crema" className="mt-5">
             <div className="font-serif text-xl font-bold">Así es mi hogar</div>
@@ -364,6 +438,14 @@ export function MamitaPublicPage() {
             {m.home_photos.length > 0 && <div className="mt-3 flex gap-2 overflow-x-auto">{m.home_photos.map((p, i) => <img key={i} src={p} alt="Cocina" className="h-28 w-40 rounded-xl object-cover" />)}</div>}
           </Card>
         )}
+        <section className="mt-7">
+          <div className="flex items-end justify-between">
+            <h2 className="font-serif text-2xl font-bold">Lo que dicen de {primerNombre(m.full_name)}</h2>
+            <span className="pb-1 text-xs text-gris"><Stars value={m.rating} count={m.rating_count} /></span>
+          </div>
+          {reviews.length === 0 ? <p className="mt-2 text-sm text-gris">Aún no tiene calificaciones.</p>
+            : <ul className="mt-1 divide-y divide-borde">{reviews.slice(0, 6).map((r) => <ReviewItem key={r.id} r={r} />)}</ul>}
+        </section>
         <h2 className="mt-7 font-serif text-2xl font-bold">Sus platitos de hoy</h2>
         {dishes.length === 0 ? <p className="mt-2 text-sm text-gris">Hoy no tiene platos publicados.</p> : (
           <div className="mt-4 grid grid-cols-2 gap-3">

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Check, Clock } from 'lucide-react'
 import type { Order, OrderStatus } from '../lib/types'
-import { STATUS_BADGE, STATUS_LABEL, timelineSteps } from '../lib/constants'
+import { STATUS_BADGE, STATUS_LABEL, statusLabel, timelineSteps } from '../lib/constants'
 import { hora, soles } from '../lib/format'
 import { api } from '../data'
 import { DishPhoto } from './ui'
@@ -34,7 +34,7 @@ export function OrderTimeline({ order }: { order: Order }) {
         const time = at(s)
         const done = !!time
         const current = i === currentIdx && order.status !== 'entregado'
-        const label = s === 'enviado' ? 'Pedido enviado · esperando revisión' : STATUS_LABEL[s]
+        const label = s === 'enviado' ? 'Pedido enviado · esperando revisión' : statusLabel(s, order.mode)
         return (
           <li key={s} className="relative flex gap-3 pb-5 last:pb-0">
             {i < steps.length - 1 && <span className={`absolute left-[13px] top-7 h-[calc(100%-20px)] w-0.5 ${done && at(steps[i + 1]) ? 'bg-ok' : 'bg-borde'}`} />}
@@ -63,7 +63,7 @@ export function OrderTotals({ o }: { o: Order }) {
   return (
     <div className="grid grid-cols-3 gap-2 text-center">
       <div className="rounded-xl bg-crema p-2"><div className="text-[10px] text-gris">Platos</div><div className="text-sm font-bold">{soles(o.subtotal)}</div></div>
-      <div className="rounded-xl bg-crema p-2"><div className="text-[10px] text-gris">{o.mode === 'delivery' ? 'Delivery' : 'Recojo'}</div><div className="text-sm font-bold">{soles(o.delivery_cost)}</div></div>
+      <div className="rounded-xl bg-crema p-2"><div className="text-[10px] text-gris">{o.mode === 'delivery' ? 'Delivery' : o.mode === 'en_casa' ? 'En el hogar' : 'Recojo'}</div><div className="text-sm font-bold">{soles(o.delivery_cost)}</div></div>
       <div className="rounded-xl bg-guinda-50 p-2"><div className="text-[10px] text-gris">Total</div><div className="text-sm font-extrabold text-guinda">{soles(o.total)}</div></div>
     </div>
   )
@@ -75,8 +75,9 @@ export function OrderItems({ o }: { o: Order }) {
       {o.items.map((it) => (
         <li key={it.dish_id + it.dish_name} className="flex items-center gap-3">
           <DishPhoto src={it.photo} alt={it.dish_name} className="h-11 w-11 rounded-xl object-cover" />
-          <div className="flex-1 text-sm"><span className="font-bold">{it.qty} ×</span> {it.dish_name}</div>
-          <div className="text-sm font-semibold">{soles(it.unit_price * it.qty)}</div>
+          <div className="min-w-0 flex-1 text-sm"><span className="font-bold">{it.qty} ×</span> {it.dish_name}
+            {it.extras?.length > 0 && <span className="block text-xs text-gris">+ {it.extras.map((x) => x.name).join(', ')}</span>}</div>
+          <div className="whitespace-nowrap text-sm font-semibold">{soles((it.unit_price + (it.extras_total ?? 0)) * it.qty)}</div>
         </li>
       ))}
     </ul>

@@ -16,10 +16,18 @@ export function YapeMark({ size = 'md' }: { size?: 'sm' | 'md' }) {
   )
 }
 
-function DemoNotice({ children }: { children: React.ReactNode }) {
+/** Notificación tipo SMS (modo demo): así llega el código de verificación del banco */
+function SmsNotification({ code, amount, onClose }: { code: string; amount: number; onClose: () => void }) {
+  useEffect(() => { const t = setTimeout(onClose, 12000); return () => clearTimeout(t) }, [code, onClose])
   return (
-    <div className="rounded-2xl border border-dashed border-[#d9b35a] bg-[#fff8e6] p-3 text-[12.5px] leading-snug text-[#7a5a10]">
-      <b>MODO PRUEBA · no se cobra nada.</b> {children}
+    <div className="pointer-events-auto fixed inset-x-0 top-0 z-[80] mx-auto max-w-[480px] px-3 pt-2 safe-top" role="status" aria-live="polite">
+      <button onClick={onClose} className="rise w-full rounded-2xl bg-[#1f1a1c]/95 p-3 text-left text-white shadow-2xl backdrop-blur">
+        <div className="flex items-center gap-2 text-[11px] text-white/60">
+          <span className="grid h-5 w-5 place-items-center rounded-md bg-[#2e9e5b] text-[10px] font-bold text-white">✉</span> Mensajes · ahora
+        </div>
+        <div className="mt-1 text-[13px] font-bold">Banco · Verificación de compra</div>
+        <div className="text-[13px] text-white/90">Tu código para la compra de {soles(amount)} en MAMAYS es <b className="font-mono text-[15px] tracking-widest" data-testid="sms-code">{code}</b>. No lo compartas.</div>
+      </button>
     </div>
   )
 }
@@ -117,10 +125,6 @@ export function YapePayForm({ order, onResult }: { order: Order; onResult: (r: P
         )}
       </div>
 
-      {api.onlinePayments === 'demo' && (
-        <DemoNotice>Usa cualquier celular de 9 dígitos y cualquier código de 6 dígitos. <b>000000</b> simula un código vencido y <b>111111112</b> un pago que Yape pide autorizar.</DemoNotice>
-      )}
-
       <Button onClick={pay} loading={busy} disabled={!phoneOk || otp.length !== 6} className="!bg-[#742284] hover:!bg-[#5d1a6a]">
         Pagar {soles(order.total)}
       </Button>
@@ -177,11 +181,6 @@ function CardFormDemo({ order, onResult }: { order: Order; onResult: (r: PayResu
   return (
     <div className="space-y-4">
       <CardPreview number={c.number} name={c.name.toUpperCase()} exp={c.exp} brand={brand} />
-      <DemoNotice>
-        Usa la tarjeta <b>4009 1753 3280 6176</b>, vencimiento futuro (ej. 11/30) y CVV <b>123</b>. Tu banco te pedirá un código de verificación (3-D Secure). Titular <b>OTHE</b> simula un rechazo.
-        <button type="button" onClick={() => setC({ number: '4009 1753 3280 6176', name: 'APRO', exp: '11/30', cvv: '123', docType: 'DNI', doc: '12345678' })}
-          className="mt-2 block font-bold underline">Rellenar con tarjeta de prueba</button>
-      </DemoNotice>
       <Field label="Número de tarjeta" error={c.number.replace(/\D/g, '').length >= 13 && !numOk ? 'Número no válido' : undefined}>
         <input className="field-input font-mono tracking-wider" inputMode="numeric" autoComplete="cc-number" placeholder="1234 1234 1234 1234"
           value={c.number} onChange={(e) => set('number', e.target.value.replace(/\D/g, '').slice(0, 16).replace(/(\d{4})(?=\d)/g, '$1 '))} />
@@ -207,6 +206,8 @@ function CardFormDemo({ order, onResult }: { order: Order; onResult: (r: PayResu
       </div>
       <Button onClick={pay} loading={busy} disabled={!valid}><Lock size={16} /> Pagar {soles(order.total)}</Button>
       <p className="flex items-center justify-center gap-1 text-center text-[11px] text-gris"><ShieldCheck size={13} /> Protegido con verificación 3-D Secure de tu banco</p>
+      <button type="button" onClick={() => setC({ number: '4009 1753 3280 6176', name: 'APRO', exp: '11/30', cvv: '123', docType: 'DNI', doc: '12345678' })}
+        className="mx-auto block text-[11px] text-[#b9a9ad] underline">Usar tarjeta de prueba</button>
     </div>
   )
 }
@@ -357,6 +358,8 @@ function ChallengeDemo({ order, challenge, onResult, onCancel }: { order: Order;
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [left, setLeft] = useState(300)
+  const [sms, setSms] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setSms(true), 1200); return () => clearTimeout(t) }, [])
   useEffect(() => { const t = setInterval(() => setLeft((l) => Math.max(0, l - 1)), 1000); return () => clearInterval(t) }, [])
   useEffect(() => { if (left === 0) onResult({ status: 'rejected', message: 'Se acabó el tiempo para verificar. Intenta pagar de nuevo.' }) }, [left, onResult])
 
@@ -367,10 +370,8 @@ function ChallengeDemo({ order, challenge, onResult, onCancel }: { order: Order;
   }
   return (
     <div className="p-6 pb-8 safe-bottom">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm font-extrabold text-tinta"><ShieldCheck className="text-ok" /> Verificación 3-D Secure</div>
-        <span className="rounded-full bg-[#fff8e6] px-2 py-0.5 text-[10px] font-bold text-[#7a5a10]">SIMULACIÓN</span>
-      </div>
+      {sms && challenge.demoCode && <SmsNotification code={challenge.demoCode} amount={order.total} onClose={() => setSms(false)} />}
+      <div className="flex items-center gap-2 text-sm font-extrabold text-tinta"><ShieldCheck className="text-ok" /> Verificación 3-D Secure</div>
       <div className="mt-4 rounded-2xl bg-crema p-4 text-sm">
         <div className="flex justify-between"><span className="text-gris">Comercio</span><b>MAMAYS</b></div>
         <div className="mt-1 flex justify-between"><span className="text-gris">Monto</span><b>{soles(order.total)}</b></div>
@@ -379,15 +380,13 @@ function ChallengeDemo({ order, challenge, onResult, onCancel }: { order: Order;
         Tu banco envió un código de 6 dígitos por SMS al celular <b className="whitespace-nowrap">{challenge.maskedPhone}</b>.</p>
       <div className="mt-4"><OtpBoxes value={code} onChange={setCode} label="Código de verificación" autoFocus /></div>
       {err && <p className="mt-2 text-sm font-semibold text-[#a32020]" role="alert">{err}</p>}
-      <div className="mt-3 rounded-xl border border-dashed border-[#d9b35a] bg-[#fff8e6] px-3 py-2 text-[12.5px] text-[#7a5a10]">
-        Código de prueba: <b className="font-mono text-base tracking-widest">{challenge.demoCode}</b>
-      </div>
-      <p className="mt-3 text-center text-xs text-gris">El código vence en {Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}</p>
+      <p className="mt-3 text-center text-xs text-gris">El código vence en {Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')} ·{' '}
+        <button type="button" onClick={() => setSms(true)} className="font-semibold text-guinda underline">¿No te llegó? Ver mensaje</button></p>
       <div className="mt-4 space-y-2">
         <Button onClick={confirm} loading={busy} disabled={code.length !== 6}>Confirmar</Button>
         <Button variant="secondary" onClick={onCancel}>Cancelar</Button>
       </div>
-      <p className="mt-3 flex items-center justify-center gap-1 text-[11px] text-gris"><CreditCard size={12} /> Con Mercado Pago real, esta pantalla la muestra tu propio banco.</p>
+      <p className="mt-3 flex items-center justify-center gap-1 text-[11px] text-gris"><CreditCard size={12} /> Verificación protegida de tu banco</p>
     </div>
   )
 }

@@ -1,9 +1,9 @@
-# MAMAYS 2.2 · comida casera hecha con amor
+# MAMAYS 2.3 · comida casera hecha con amor
 
 App móvil que conecta **comensales de Puno** con **mamitas** que cocinan en casa.
 Hecha con React + Vite + Tailwind, **Supabase** como backend y **Capacitor** para generar el APK de Android.
 
-> **Sin configurar nada funciona en MODO DEMO:** trae 4 mamitas y 12 platos de ejemplo, y todo se guarda solo en ese teléfono o navegador.
+> **Sin configurar nada funciona en MODO DEMO:** trae 4 mamitas y 10 platos de ejemplo, y todo se guarda solo en ese teléfono o navegador.
 > Cuentas de prueba (contraseña `demo123`): `comensal@demo.pe`, `juana@demo.pe`, `teodora@demo.pe`, `marta@demo.pe`, `elena@demo.pe`.
 
 ---
@@ -66,7 +66,11 @@ En el **modo demo**: Yape acepta cualquier celular y código (`000000` simula un
 4. Cuando aparezca ✅, ve a **Releases** (columna derecha del repositorio) → descarga **MAMAYS.apk** desde el celular.
 5. Ábrelo en Android. Si te lo bloquea, permite **“Instalar apps desconocidas”** para tu navegador o tu gestor de archivos.
 
-Cada vez que subas un cambio, GitHub genera un APK nuevo.
+Cada vez que subas un cambio, GitHub genera un APK nuevo (versión `2.3.<número de compilación>`).
+
+> **Firma fija de pruebas:** desde la 2.3 todos los APK se firman con la misma llave (`resources/signing/mamays-pruebas.keystore`), así que **cada versión nueva se instala encima de la anterior sin desinstalar**.
+> Solo la primera vez que pases de la 2.2 a la 2.3 tienes que desinstalar la versión vieja.
+> Esa llave es pública y solo sirve para pruebas. Para publicar en Play Store, crea tu propia llave privada y **no** la subas al repositorio.
 
 ## Alternativa B · Android Studio en tu PC
 
@@ -95,6 +99,25 @@ Para cambiar Supabase sin recompilar, edita `config.js` dentro de la carpeta pub
 
 ---
 
+## Novedades 2.3 (Sprint 4 · Producción)
+
+| # | Pedido | Cómo quedó |
+|---|---|---|
+| 1 | Google Maps | Botones **“Ver zona en Google Maps”** (plato y perfil de la mamita), **“Cómo llegar”** cuando la mamita acepta un recojo y **“Ruta en Google Maps”** para que la mamita llegue al delivery. En el APK abre la app de Google Maps. |
+| 2 | Calificar plato y mamá | Tras recibir el pedido, el comensal califica **a la mamita y a cada plato** (★1 a ★5 + reseña). Solo con compra entregada: aparece como **“Compra verificada”**. |
+| 3 | Bienvenida para mamás nuevas | 4 pantallas al registrarse (cómo funciona, seguridad, foto de perfil) y una lista de **“Primeros pasos”** en su inicio. |
+| 4 | Guía de uso para mamás | **Guía paso a paso** (publicar, porciones, pedidos, cobros, comensales en casa, reseñas, perfil y consejos). Está en el inicio y en el perfil. |
+| 5 | Ocultar aviso de modo prueba | Se eliminaron los recuadros “MODO PRUEBA”. En la demo, el código 3-D Secure llega como **notificación SMS**. |
+| 6 | Platos en 3D | **Visor 3D** (three.js): la foto del plato servida en un plato de cerámica, con relieve. Se gira con el dedo y se acerca pellizcando. |
+| 7 | Extras por plato | La mamita agrega **extras con precio** (gelatina, mazamorra, ensalada, chicha… hasta 10). El comensal los marca y se suman al total. El servidor los valida. |
+| 8 | Alérgenos al pedir | Alerta al **abrir** un plato con tus alérgenos y aviso de alérgenos al **agregar** cualquier plato que los tenga. En el carrito, resumen **“Alérgenos de tu pedido”**. |
+| 9 | Comer en el hogar | Nueva modalidad, activable por plato. El comensal indica cuántas personas van (1 a 6) y **debe aceptar los términos de seguridad y convivencia**. El servidor rechaza el pedido sin aceptación. La dirección se revela al aceptar. |
+| + | Toda la tarde | Horarios rápidos: Almuerzo, **Toda la tarde (12:00–18:30)**, Lonche, Cena y Todo el día. |
+| + | Foto de la mamá | Botón de **cámara sobre la foto** en el perfil: se cambia al instante, también en modo edición. |
+| + | Comentarios por plato | Sección **Comentarios** en cada plato: preguntas abiertas a todos y calificaciones verificadas. La mamita **responde** desde “Lo que dicen de ti”. |
+
+> **¿Ya tenías Supabase configurado?** Vuelve a ejecutar `supabase/schema.sql` completo en el SQL Editor: es seguro repetirlo y agrega las tablas y columnas nuevas sin borrar datos.
+
 ## Mejoras respecto al prototipo de Figma Make
 
 | Carencia detectada | Solución en MAMAYS 2.1 |
@@ -121,9 +144,11 @@ Para cambiar Supabase sin recompilar, edita `config.js` dentro de la carpeta pub
 ## Seguridad (Supabase)
 
 - **RLS en todas las tablas.** Nadie lee el perfil privado de otra persona: la dirección, el correo y el celular de las mamitas no se exponen.
-- **Los pedidos solo se crean y cambian por funciones del servidor** (`place_order`, `submit_voucher`, `set_order_status`, `rate_order`). El precio y el delivery se calculan en el servidor, no en el celular.
+- **Los pedidos solo se crean y cambian por funciones del servidor** (`place_order`, `submit_voucher`, `set_order_status`, `submit_reviews`, `add_comment`, `reply_review`). El precio y el delivery se calculan en el servidor, no en el celular.
 - **Las constancias de Yape van en un bucket privado:** solo las ven el comensal y la mamita de ese pedido, mediante enlaces temporales.
 - **Bloqueo de fila al pedir:** el stock no se puede sobrevender.
+- **Reseñas a prueba de trampas:** solo califica quien recibió su pedido (una vez por pedido y plato); máximo 10 comentarios por día; solo la mamita dueña puede responder.
+- **Extras y “comer en el hogar” validados en el servidor:** precio del extra tomado de la base de datos; sin términos aceptados el pedido se rechaza.
 
 ## Estructura
 
@@ -132,18 +157,23 @@ public/config.js            ← datos de Supabase (vacío = modo demo)
 supabase/schema.sql         ← base de datos completa (ejecutar 1 vez)
 src/data/                   ← API común: supabaseApi.ts (nube) y localApi.ts (demo)
 src/components/payments.tsx ← Yape (celular + código), tarjeta y verificación 3-D Secure
+src/components/Dish3D.tsx   ← visor 3D de platos (three.js)
+src/components/reviews.tsx  ← estrellas, comentarios y respuestas
+src/pages/mamita/MamitaHelp.tsx ← bienvenida y guía de uso para mamás
+src/lib/maps.ts             ← enlaces a Google Maps
 supabase/functions/pagar/   ← función del servidor que cobra con Mercado Pago
 src/pages/auth|comensal|mamita
 src/components/             ← UI reutilizable (DishCard, timeline, mapa…)
 scripts/android-prepare.mjs ← crea y configura el proyecto Android
 .github/workflows/          ← compilar APK y publicar la web
 resources/android/          ← íconos y splash de la app
+resources/signing/          ← llave de PRUEBAS para firmar el APK (fija)
 ```
 
 ## Verificación realizada
 
-- `schema.sql` probado en **PostgreSQL real (PGlite)** con un entorno tipo Supabase: **53 pruebas OK**, entre ellas RLS, validaciones, reserva y vencimiento, pagos en línea (solo el servidor puede confirmarlos, sin dobles cobros) y protección contra sobreventa.
+- `schema.sql` probado en **PostgreSQL real (PGlite)** con un entorno tipo Supabase: **73 pruebas OK**, entre ellas RLS, validaciones, reserva y vencimiento, pagos en línea (solo el servidor puede confirmarlos, sin dobles cobros) y protección contra sobreventa, reseñas solo con compra verificada, extras con precio del servidor y términos obligatorios para comer en el hogar.
 - La función `pagar` pasa la verificación de tipos de **Deno** (el entorno de Supabase Edge Functions).
-- Recorridos completos en **Chromium móvil** (390×844): **34 + 20 pasos OK**, sin errores de consola (registro, alerta de alergia, Yape con código, tarjeta con 3-D Secure, la mamita atiende, ventas y valoración).
+- Recorridos completos en **Chromium móvil** (390×844): **35 + 23 + 37 pasos OK**, sin errores de consola (registro, alertas de alergia, extras, visor 3D, Google Maps, comentarios, comer en el hogar con términos, Yape con código, tarjeta con 3-D Secure por SMS, calificaciones con respuesta, bienvenida y guía de la mamá nueva). Además, ninguna pantalla se desborda a lo ancho en celulares de 360 px.
 - La conexión real con Mercado Pago no se pudo probar desde aquí (sin acceso a internet externo): pruébala con las credenciales y datos de prueba de la tabla de arriba.
 - El proyecto Android se genera con Capacitor 7 (SDK 35). El APK se compila con la alternativa A o la B.

@@ -3,6 +3,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { MamitaPublic } from '../lib/types'
 import { PUNO_CENTER, ZONA_COORDS } from '../lib/constants'
+import { openMapsSearch } from '../lib/maps'
 
 /** Mapa con OpenStreetMap (sin API key). Muestra la ZONA pública de cada mamita, nunca su dirección exacta. */
 export function MapView({ mamitas, onSelect, height = 260 }: { mamitas: MamitaPublic[]; onSelect?: (id: string) => void; height?: number }) {
@@ -32,8 +33,17 @@ export function MapView({ mamitas, onSelect, height = 260 }: { mamitas: MamitaPu
         html: `<div style="background:#A3173B;color:#fff;border:3px solid #fff;border-radius:999px;width:34px;height:34px;display:grid;place-items:center;font:700 14px Playfair Display,serif;box-shadow:0 4px 10px rgba(0,0,0,.3)">${(mm.full_name[0] || 'M').toUpperCase()}</div>`,
         iconSize: [34, 34], iconAnchor: [17, 17],
       })
+      // Ventana del pin: datos de la mamita + botón para abrir en Google Maps (texto escapado)
+      const box = document.createElement('div')
+      const b = document.createElement('b'); b.textContent = mm.full_name
+      const z = document.createElement('div'); z.textContent = `${mm.public_zone_label || mm.zone} · ${mm.dish_count} platitos hoy`
+      const btn = document.createElement('button')
+      btn.textContent = 'Abrir en Google Maps'
+      btn.style.cssText = 'margin-top:6px;background:#A3173B;color:#fff;border:0;border-radius:999px;padding:6px 10px;font-weight:700;font-size:12px'
+      btn.onclick = () => openMapsSearch({ lat: pos[0], lng: pos[1] })
+      box.append(b, z, btn)
       L.marker(pos, { icon, title: mm.full_name }).addTo(layer)
-        .bindPopup(`<b>${mm.full_name}</b><br/>${mm.public_zone_label || mm.zone}<br/>${mm.dish_count} platitos hoy`)
+        .bindPopup(box)
         .on('click', () => onSelect?.(mm.id))
     })
     if (pts.length > 1) m.fitBounds(L.latLngBounds(pts), { padding: [30, 30], maxZoom: 15 })

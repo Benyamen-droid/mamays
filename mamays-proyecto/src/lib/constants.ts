@@ -84,6 +84,45 @@ export function timelineSteps(mode: OrderMode): OrderStatus[] {
   return ['enviado', 'aceptado', 'preparando', mode === 'delivery' ? 'en_camino' : 'listo', 'entregado']
 }
 
+/** Texto del estado según la modalidad (comer en el hogar usa sus propias palabras) */
+export function statusLabel(s: OrderStatus, mode: OrderMode) {
+  if (mode === 'en_casa' && s === 'listo') return 'Tu mesa está lista'
+  if (mode === 'en_casa' && s === 'entregado') return 'Atendido en el hogar'
+  return STATUS_LABEL[s]
+}
+
+export const MODE_LABEL: Record<OrderMode, string> = {
+  delivery: 'Delivery',
+  recojo: 'Recojo',
+  en_casa: 'Comer en el hogar',
+}
+
+/** Horarios rápidos para que la mamita publique (incluye ofrecer toda la tarde) */
+export const HORARIOS: { id: string; label: string; from: string; to: string }[] = [
+  { id: 'almuerzo', label: 'Almuerzo', from: '11:30', to: '15:00' },
+  { id: 'tarde', label: 'Toda la tarde', from: '12:00', to: '18:30' },
+  { id: 'lonche', label: 'Lonche', from: '16:00', to: '19:00' },
+  { id: 'cena', label: 'Cena', from: '18:30', to: '21:30' },
+  { id: 'dia', label: 'Todo el día', from: '08:00', to: '21:00' },
+]
+export function horarioPreset(from: string, to: string) {
+  return HORARIOS.find((h) => h.from === from && h.to === to) ?? null
+}
+
+/** Términos de seguridad y convivencia para comer en el hogar de la mamita (versión) */
+export const TERMINOS_VERSION = 'v1-2026-11'
+export const TERMINOS_HOGAR: { t: string; d: string }[] = [
+  { t: 'Puntualidad', d: 'Llega dentro del horario acordado. Si te retrasas más de 15 minutos, la mamita puede no atenderte.' },
+  { t: 'Solo las personas indicadas', d: 'Asiste únicamente con el número de comensales que registraste en el pedido.' },
+  { t: 'Respeto al hogar y la familia', d: 'Trato amable con la mamita y su familia. No ingreses a otras áreas de la casa sin permiso.' },
+  { t: 'Sin alcohol ni sustancias', d: 'No se permite llevar ni consumir bebidas alcohólicas ni otras sustancias, ni fumar.' },
+  { t: 'Alergias e higiene', d: 'Avisa tus alergias antes de comer. Es una cocina doméstica: puede haber contacto cruzado.' },
+  { t: 'Derecho de admisión', d: 'La mamita puede no recibirte si no se cumplen estas normas, por su seguridad y la de su familia.' },
+  { t: 'Seguridad personal', d: 'Comparte con alguien de confianza a dónde vas. La dirección exacta se muestra solo cuando la mamita acepta tu pedido.' },
+  { t: 'Daños y pertenencias', d: 'Eres responsable de los daños que causes. MAMAYS conecta a comensales y mamitas, y no responde por objetos personales.' },
+]
+
+
 /** Siguiente estado que puede marcar la mamita */
 export function nextStatus(status: OrderStatus, mode: OrderMode): OrderStatus | null {
   switch (status) {
@@ -99,6 +138,12 @@ export function nextStatus(status: OrderStatus, mode: OrderMode): OrderStatus | 
     default:
       return null
   }
+}
+
+export function nextActionLabel(s: OrderStatus, mode: OrderMode) {
+  if (s === 'listo' && mode === 'en_casa') return 'Mesa lista para recibir'
+  if (s === 'entregado' && mode === 'en_casa') return 'Comensal atendido'
+  return NEXT_ACTION_LABEL[s] ?? 'Actualizar'
 }
 
 export const NEXT_ACTION_LABEL: Partial<Record<OrderStatus, string>> = {

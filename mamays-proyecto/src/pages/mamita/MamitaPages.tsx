@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  ChartColumn, ChevronRight, Eye, Heart, Pause, Pencil, Phone, Play, Plus, ShoppingBag, Store, Target, Trash2, Truck, Users,
+  BookOpen, Camera, ChartColumn, ChevronRight, DoorOpen, Eye, Heart, Navigation, Pause, Pencil, Phone, Play, Plus, ShoppingBag, Store, Target, Trash2, Truck, Users,
 } from 'lucide-react'
 import { api, mensajeError } from '../../data'
 import { useAuth, useToast } from '../../context/AppContext'
-import { ACTIVE_STATUSES, ALERGENOS, CATEGORIAS, ETIQUETAS, NEXT_ACTION_LABEL, ZONAS, nextStatus } from '../../lib/constants'
-import type { DeliveryMode, Dish, DishView, Order } from '../../lib/types'
-import { celularValido, fechaHora, primerNombre, soles } from '../../lib/format'
+import { ACTIVE_STATUSES, ALERGENOS, CATEGORIAS, ETIQUETAS, HORARIOS, ZONAS, nextActionLabel, nextStatus } from '../../lib/constants'
+import type { DeliveryMode, Dish, DishView, Extra, Order, Review } from '../../lib/types'
+import { celularValido, comprimirImagen, fechaHora, primerNombre, soles } from '../../lib/format'
+import { openMapsDirections } from '../../lib/maps'
+import { ReviewItem } from '../../components/reviews'
+import { PrimerosPasos } from './MamitaHelp'
 import { OrderItems, OrderTotals, StatusBadge, VoucherImage } from '../../components/orders'
 import {
   Avatar, BackButton, Button, Card, CheckGrid, DishPhoto, EmptyState, Eyebrow, Field, ImagePicker, Loading, PageTitle, Screen, Segmented, Sheet, Stars, Stepper,
@@ -31,6 +34,7 @@ export function MamitaHome() {
   const nuevos = visibles.filter((o) => o.status === 'enviado').length
   const ventasHoy = visibles.filter((o) => o.status === 'entregado' && isToday(o.created_at)).reduce((a, o) => a + o.total, 0)
   const sinStock = (dishes ?? []).filter((d) => !d.paused && d.available === 0).length
+  if (profile && !profile.onboarded) return <Navigate to="/mamita/bienvenida" replace />
 
   return (
     <Screen>
@@ -42,6 +46,7 @@ export function MamitaHome() {
           <span className="flex-1 font-bold">{nuevos === 1 ? 'Tienes 1 pedido nuevo' : `Tienes ${nuevos} pedidos nuevos`}</span><ChevronRight />
         </Link>
       )}
+      {dishes && <PrimerosPasos dishCount={dishes.length} />}
       <div className="grid grid-cols-2 gap-3">
         <Stat label="Platitos publicados" value={dishes ? dishes.filter((d) => !d.paused).length : '—'} />
         <Stat label="Pedidos de hoy" value={visibles.filter((o) => isToday(o.created_at)).length} />
@@ -53,6 +58,7 @@ export function MamitaHome() {
         <MenuRow to="/mamita/platos" icon={<Target />} title="Mis platitos" text="Mira y administra lo que tienes publicado" />
         <MenuRow to="/mamita/pedidos" icon={<ShoppingBag />} title="Mis pedidos" text="Revisa quiénes esperan tus delicias" />
         <MenuRow to="/mamita/ventas" icon={<ChartColumn />} title="Mis ventas" text="Descubre cuánto estás ganando" />
+        <MenuRow to="/mamita/guia" icon={<BookOpen />} title="Guía de uso" text="Aprende paso a paso a usar MAMAYS" />
       </div>
     </Screen>
   )
@@ -142,6 +148,7 @@ export function DishForm() {
   const [f, setF] = useState<Partial<Dish> | null>(id ? null : {
     name: '', description: '', category: 'Tradicional', price: undefined, portions: 5, ingredients: '', allergens: [], tags: [],
     delivery_mode: 'ambos', delivery_cost: null, available_from: '11:30', available_to: '15:00', conservation: '', photos: [], paused: false,
+    extras: [], dine_in: false,
   })
   const [costText, setCostText] = useState('')
   const [priceText, setPriceText] = useState('')
@@ -170,6 +177,7 @@ export function DishForm() {
       if (!(c >= 0)) e.delivery_cost = 'Indica el costo de delivery (puede ser 0, sin negativos).'
     }
     if ((f!.available_from ?? '') >= (f!.available_to ?? '')) e.horario = 'La hora de fin debe ser después del inicio.'
+    if ((f!.extras ?? []).some((x) => x.name.trim().length < 2 || !(x.price >= 0 && x.price <= 50))) e.extras = 'Cada extra necesita nombre y un precio entre S/ 0 y S/ 50.'
     if (!f!.photos?.length) e.photos = 'Agrega al menos una foto: los platos con foto se piden más.'
     setErrs(e)
     return Object.keys(e).length === 0
@@ -233,14 +241,33 @@ export function DishForm() {
           )}
         </div>
 
+        <ExtrasEditor value={f.extras ?? []} onChange={(v) => set('extras', v)} error={errs.extras} />
+
+        <label className="flex items-start gap-3 rounded-[20px] border border-borde bg-white p-4">
+          <input type="checkbox" className="mt-1 h-5 w-5 accent-[#A3173B]" checked={!!f.dine_in} onChange={(e) => set('dine_in', e.target.checked)} />
+          <span className="text-sm"><b className="flex items-center gap-1.5"><DoorOpen size={16} className="text-guinda" /> Recibo comensales en mi hogar</b>
+            <span className="text-gris">Podrán venir a comer a tu casa. Antes deben aceptar normas de seguridad y convivencia, y tu dirección se comparte solo cuando aceptas.</span></span>
+        </label>
+
         <div>
-          <div className="mb-1.5 text-[13px] font-bold">Horario de entrega/recojo de hoy</div>
+          <div className="mb-1.5 text-[13px] font-bold">Horario de atención</div>
+          <div className="mb-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Horarios rápidos">
+            {HORARIOS.map((hh) => {
+              const on = f.available_from === hh.from && f.available_to === hh.to
+              return (
+                <button key={hh.id} type="button" role="radio" aria-checked={on} onClick={() => setF((x) => ({ ...x!, available_from: hh.from, available_to: hh.to }))}
+                  className={`rounded-full border px-3 py-1.5 text-[13px] font-semibold ${on ? 'border-guinda bg-guinda text-white' : 'border-borde bg-white text-cafe'}`}>
+                  {hh.label}
+                </button>
+              )
+            })}
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <input type="time" className="field-input" value={f.available_from} onChange={(e) => set('available_from', e.target.value)} aria-label="Desde" />
             <input type="time" className="field-input" value={f.available_to} onChange={(e) => set('available_to', e.target.value)} aria-label="Hasta" />
           </div>
           {errs.horario && <p className="mt-1 text-xs font-semibold text-[#b42323]">{errs.horario}</p>}
-          <p className="mt-1 text-xs text-gris">Se muestra en la tarjeta del plato para que los comensales se organicen.</p>
+          <p className="mt-1 text-xs text-gris">“Toda la tarde” (12:00 a 6:30 p. m.) atrae a estudiantes que piden entre clases.</p>
         </div>
         <Field label="Conservación" optional><input className="field-input" value={f.conservation} onChange={(e) => set('conservation', e.target.value)} placeholder="Ej. Refrigerar y consumir en 24 h" /></Field>
 
@@ -252,6 +279,47 @@ export function DishForm() {
         <div className="mt-5 space-y-2"><Button variant="danger" onClick={remove}>Sí, eliminar</Button><Button variant="secondary" onClick={() => setConfirmDel(false)}>Cancelar</Button></div>
       </Sheet>
     </Screen>
+  )
+}
+
+/** Editor de extras / acompañamientos del plato */
+function ExtrasEditor({ value, onChange, error }: { value: Extra[]; onChange: (v: Extra[]) => void; error?: string }) {
+  const [name, setName] = useState('')
+  const [price, setPrice] = useState('')
+  const sugerencias = ['Gelatina', 'Mazamorra morada', 'Arroz con leche', 'Ensalada fresca', 'Chicha morada', 'Refresco de maracuyá', 'Porción extra de arroz', 'Huevo frito']
+  function add(n = name, p = price) {
+    const precio = Number(String(p).replace(',', '.'))
+    if (n.trim().length < 2 || !(precio >= 0 && precio <= 50) || value.length >= 10) return
+    onChange([...value, { id: `x${Date.now().toString(36)}`, name: n.trim(), price: Math.round(precio * 100) / 100 }])
+    setName(''); setPrice('')
+  }
+  return (
+    <fieldset className="rounded-[20px] border border-borde bg-white p-4">
+      <legend className="px-2 font-semibold">Extras y acompañamientos <span className="text-xs font-normal text-gris">(opcional)</span></legend>
+      <p className="-mt-1 text-xs text-gris">El comensal los puede sumar a su plato: postres, gelatina, ensaladas, bebidas…</p>
+      {value.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {value.map((x) => (
+            <li key={x.id} className="flex items-center gap-2 rounded-xl bg-crema px-3 py-2 text-sm">
+              <span className="flex-1 font-semibold">{x.name}</span>
+              <span className="whitespace-nowrap font-bold text-guinda">+ {soles(x.price)}</span>
+              <button type="button" onClick={() => onChange(value.filter((e) => e.id !== x.id))} aria-label={`Quitar ${x.name}`} className="grid h-8 w-8 place-items-center rounded-full text-gris hover:bg-white"><Trash2 size={15} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 grid grid-cols-[1fr_90px_auto] gap-2">
+        <input className="field-input !py-2.5" placeholder="Ej. Gelatina" value={name} onChange={(e) => setName(e.target.value)} aria-label="Nombre del extra" maxLength={40} />
+        <input className="field-input !py-2.5" placeholder="S/ 2.00" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} aria-label="Precio del extra" />
+        <button type="button" onClick={() => add()} className="grid h-[46px] w-[46px] place-items-center rounded-xl bg-guinda text-white disabled:opacity-40" disabled={name.trim().length < 2 || price === ''} aria-label="Agregar extra"><Plus size={18} /></button>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {sugerencias.filter((sg) => !value.some((v) => v.name === sg)).slice(0, 6).map((sg) => (
+          <button key={sg} type="button" onClick={() => setName(sg)} className="rounded-full border border-dashed border-[#d9b3bf] px-2.5 py-1 text-[11.5px] font-semibold text-guinda">+ {sg}</button>
+        ))}
+      </div>
+      {error && <p className="mt-2 text-xs font-semibold text-[#b42323]">{error}</p>}
+    </fieldset>
   )
 }
 
@@ -276,7 +344,7 @@ export function MamitaOrders() {
     const n = nextStatus(o.status, o.mode)
     if (!n) return
     setBusyId(o.id)
-    try { await api.setOrderStatus(o.id, n); toast(NEXT_ACTION_LABEL[n] ?? 'Actualizado'); await load() } catch (e) { toast(mensajeError(e), 'error') } finally { setBusyId(null) }
+    try { await api.setOrderStatus(o.id, n); toast(nextActionLabel(n, o.mode)); await load() } catch (e) { toast(mensajeError(e), 'error') } finally { setBusyId(null) }
   }
   async function doReject() {
     if (!reject) return
@@ -316,8 +384,16 @@ export function MamitaOrders() {
                 </div>
                 <div className="mt-3"><OrderItems o={o} /></div>
                 <div className="mt-3 space-y-1 rounded-2xl bg-crema p-3 text-sm">
-                  <div className="flex gap-2">{o.mode === 'delivery' ? <Truck size={16} className="mt-0.5 text-guinda" /> : <Store size={16} className="mt-0.5 text-guinda" />}
-                    {o.mode === 'delivery' ? <span>Delivery a <b>{o.delivery_address}</b></span> : <span>Recoge en tu cocina</span>}</div>
+                  <div className="flex gap-2">{o.mode === 'delivery' ? <Truck size={16} className="mt-0.5 text-guinda" /> : o.mode === 'en_casa' ? <DoorOpen size={16} className="mt-0.5 text-guinda" /> : <Store size={16} className="mt-0.5 text-guinda" />}
+                    {o.mode === 'delivery' && <span>Delivery a <b>{o.delivery_address}</b></span>}
+                    {o.mode === 'recojo' && <span>Recoge en tu cocina</span>}
+                    {o.mode === 'en_casa' && <span><b>Comerá en tu hogar · {o.guests} {o.guests === 1 ? 'persona' : 'personas'}</b>
+                      {o.terms_accepted_at && <span className="block text-xs text-ok">✓ Aceptó las normas de seguridad y convivencia</span>}</span>}</div>
+                  {o.mode === 'delivery' && ACTIVE_STATUSES.includes(o.status) && (
+                    <button onClick={() => openMapsDirections(o.delivery_address, 'driving')} className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-bold text-guinda shadow-sm">
+                      <Navigation size={13} /> Ruta en Google Maps
+                    </button>
+                  )}
                   <div className="flex gap-2"><Phone size={16} className="mt-0.5 text-guinda" /> Recibe {o.receiver_name} · <a className="font-semibold text-guinda" href={`tel:${o.receiver_phone}`}>{o.receiver_phone}</a></div>
                   {o.payer_name && o.payer_name !== o.receiver_name && <div className="flex gap-2"><Users size={16} className="mt-0.5 text-guinda" /> Paga {o.payer_name}</div>}
                   {o.notes && <div className="rounded-xl bg-white p-2 text-[13px]">📝 {o.notes}</div>}
@@ -340,7 +416,7 @@ export function MamitaOrders() {
                 {n && (
                   <div className="mt-3 flex gap-2">
                     {['enviado', 'aceptado'].includes(o.status) && <Button variant="secondary" full={false} onClick={() => setReject(o)}>Rechazar</Button>}
-                    <Button onClick={() => advance(o)} loading={busyId === o.id} className="flex-1">{NEXT_ACTION_LABEL[n]}</Button>
+                    <Button onClick={() => advance(o)} loading={busyId === o.id} className="flex-1">{nextActionLabel(n, o.mode)}</Button>
                   </div>
                 )}
                 {o.rating && <p className="mt-3 text-sm"><span className="text-[#E9A23B]">{'★'.repeat(o.rating)}</span> {o.review && <span className="text-gris">“{o.review}”</span>}</p>}
@@ -431,7 +507,26 @@ export function MamitaProfile() {
   const [f, setF] = useState(profile!)
   const [rating, setRating] = useState<{ r: number | null; c: number; n: number }>({ r: null, c: 0, n: 0 })
   const [busy, setBusy] = useState(false)
+  const [photoBusy, setPhotoBusy] = useState(false)
+  const [reviews, setReviews] = useState<Review[]>([])
+  const fileRef = useRef<HTMLInputElement>(null)
   useEffect(() => { api.getMamita(profile!.id).then((m) => m && setRating({ r: m.rating, c: m.rating_count, n: m.dish_count })).catch(() => {}) }, [profile])
+  const loadReviews = useCallback(() => api.listReviews({ mamitaId: profile!.id }).then(setReviews).catch(() => {}), [profile])
+  useEffect(() => { loadReviews() }, [loadReviews])
+  const [dishNames, setDishNames] = useState<Record<string, string>>({})
+  useEffect(() => { api.listMyDishes().then((ds) => setDishNames(Object.fromEntries(ds.map((d) => [d.id, d.name])))).catch(() => {}) }, [])
+
+  // Cambiar la foto de perfil tocando la cámara (se guarda al instante)
+  async function changePhoto(file?: File) {
+    if (!file || !file.type.startsWith('image/')) return
+    setPhotoBusy(true)
+    try {
+      const blob = await comprimirImagen(file, 600, 0.8)
+      const url = await api.uploadImage('avatar', blob)
+      const p = await api.updateProfile({ avatar_url: url })
+      setProfile(p); setF((x) => ({ ...x, avatar_url: url })); toast('¡Foto de perfil actualizada!')
+    } catch (e) { toast(mensajeError(e), 'error') } finally { setPhotoBusy(false); if (fileRef.current) fileRef.current.value = '' }
+  }
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
 
   async function save() {
@@ -444,12 +539,19 @@ export function MamitaProfile() {
   const p = profile!
   return (
     <Screen className="!px-0 !pt-0">
-      <div className="relative h-36 rounded-b-[32px] bg-gradient-to-br from-guinda to-[#d0345d]">
+      <div className="relative h-36 overflow-hidden rounded-b-[32px] bg-gradient-to-br from-guinda to-[#d0345d]">
         <div className="absolute -right-4 top-4 h-28 w-28 rounded-full border-[16px] border-white/15" />
       </div>
       <div className="px-5">
         <div className="-mt-14 flex items-end justify-between">
-          <Avatar name={p.full_name} url={p.avatar_url} size={104} />
+          <div className="relative">
+            <Avatar name={p.full_name} url={p.avatar_url} size={104} />
+            <button onClick={() => fileRef.current?.click()} disabled={photoBusy} aria-label="Cambiar foto de perfil"
+              className="absolute -bottom-1 -right-1 grid h-10 w-10 place-items-center rounded-full border-[3px] border-white bg-guinda text-white shadow-lg">
+              {photoBusy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : <Camera size={18} />}
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => changePhoto(e.target.files?.[0])} data-testid="avatar-input" />
+          </div>
           <button onClick={() => setEdit(!edit)} className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-borde bg-white px-4 py-2 text-xs font-bold text-guinda shadow-sm">
             <Pencil size={14} /> {edit ? 'Cerrar edición' : 'Editar perfil y fotos'}
           </button>
@@ -472,6 +574,24 @@ export function MamitaProfile() {
               <div><div className="text-[10px] font-bold uppercase tracking-wider text-gris">Contacto</div>{p.phone}</div>
             </Card>
             <p className="mt-4 font-serif text-lg font-bold">{rating.n} platitos publicados</p>
+
+            <section className="mt-6" aria-labelledby="resenas-mamita">
+              <div className="flex items-end justify-between">
+                <h2 id="resenas-mamita" className="font-serif text-2xl font-bold">Lo que dicen de ti</h2>
+                <span className="pb-1 text-xs text-gris">{reviews.length} {reviews.length === 1 ? 'opinión' : 'opiniones'}</span>
+              </div>
+              {reviews.length === 0 ? <p className="mt-2 text-sm text-gris">Cuando te califiquen o comenten tus platos, aparecerá aquí y podrás responder.</p> : (
+                <ul className="mt-1 divide-y divide-borde">
+                  {reviews.map((r) => (
+                    <ReviewItem key={r.id} r={r} canReply onChanged={loadReviews}
+                      label={r.kind === 'mamita' ? 'Sobre ti' : r.kind === 'dish' ? `Calificación · ${dishNames[r.dish_id ?? ''] ?? 'plato'}` : `Comentario · ${dishNames[r.dish_id ?? ''] ?? 'plato'}`} />
+                  ))}
+                </ul>
+              )}
+            </section>
+            <Link to="/mamita/guia" className="mt-6 flex items-center gap-3 rounded-[20px] border border-borde bg-white p-4">
+              <BookOpen className="text-guinda" /><span className="flex-1 font-bold">Guía de uso</span><ChevronRight className="text-gris" />
+            </Link>
             <Button variant="secondary" className="mt-6" onClick={async () => { await signOut(); nav('/') }}>Cerrar sesión</Button>
           </>
         ) : (

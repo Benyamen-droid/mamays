@@ -244,8 +244,9 @@ export function Register() {
       const r = await api.signUp({ role: rol, email, password, profile })
       if (r.needsConfirmation) { setConfirm(true); return }
       setProfile(r.profile)
-      toast(`¡Bienvenida a nuestra mesa, ${primerNombre(f.full_name)}!`)
-      nav(home(rol), { replace: true })
+      // la mamita nueva ya recibe su bienvenida a pantalla completa: sin toast encima
+      if (rol !== 'mamita') toast(`¡Bienvenida a nuestra mesa, ${primerNombre(f.full_name)}!`)
+      nav(rol === 'mamita' ? '/mamita/bienvenida' : home(rol), { replace: true })
     } catch (e) { toast(mensajeError(e), 'error') } finally { setBusy(false) }
   }
 

@@ -1,7 +1,7 @@
 import { useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Bell, ChevronLeft, Clock, House, ImagePlus, Leaf, LogOut, Minus, Plus, ReceiptText, RotateCcw,
+  Bell, ChevronLeft, Clock, DoorOpen, House, ImagePlus, Leaf, LogOut, Minus, Plus, ReceiptText, RotateCcw,
   Salad, ShoppingBag, Sparkles, Store, Target, TriangleAlert, Truck, UserRound, X,
 } from 'lucide-react'
 import { useAuth, useCart, useNotifications, useToast } from '../context/AppContext'
@@ -48,10 +48,15 @@ export function Stars({ value, count, className = '' }: { value: number | null; 
 /* ---------------- Foto de plato con respaldo ---------------- */
 const ARTS = ['arroz', 'queso', 'aji', 'trucha', 'sopa', 'quinua', 'verde', 'carne']
 /** Muestra la foto real; si no carga (sin internet o enlace roto), pone una ilustración en su lugar */
+/** Ilustración de respaldo de un plato (la misma en tarjetas, detalle y visor 3D) */
+export function dishFallbackArt(name: string) {
+  const seed = [...name].reduce((a, c) => a + c.charCodeAt(0), 0)
+  return dishArt(ARTS[seed % ARTS.length], seed)
+}
+
 export function DishPhoto({ src, alt, className = '', onClick }: { src?: string; alt: string; className?: string; onClick?: () => void }) {
   const [failed, setFailed] = useState(false)
-  const seed = [...alt].reduce((a, c) => a + c.charCodeAt(0), 0)
-  const art = dishArt(ARTS[seed % ARTS.length], seed)
+  const art = dishFallbackArt(alt)
   return <img src={!src || failed ? art : src} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer"
     onError={() => setFailed(true)} onClick={onClick} className={className} />
 }
@@ -150,6 +155,7 @@ export function Stepper({ value, onChange, min = 1, max = 20, label }: { value: 
 const TAG_ICON: Record<string, ReactNode> = {
   Vegetariano: <Leaf size={13} />, Vegano: <Leaf size={13} />, Saludable: <Salad size={13} />, 'Bajo en sal': <Sparkles size={13} />,
   'Se puede recalentar': <RotateCcw size={13} />, 'Consumir fresco': <Clock size={13} />, Delivery: <Truck size={13} />, Recojo: <Store size={13} />,
+  'Comer en el hogar': <DoorOpen size={13} />,
 }
 export function Tag({ label, alert, icon, sm }: { label: string; alert?: boolean; icon?: ReactNode; sm?: boolean }) {
   return (

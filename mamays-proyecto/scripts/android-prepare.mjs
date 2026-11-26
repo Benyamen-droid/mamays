@@ -45,6 +45,27 @@ if (fs.existsSync(strings)) {
     .replace(/<string name="title_activity_main">.*?<\/string>/, '<string name="title_activity_main">MAMAYS</string>'))
 }
 
-// 3) Copiar la web compilada dentro del APK
+// 3) Firma fija para las versiones de prueba: así cada APK nuevo se instala ENCIMA del anterior
+//    (sin desinstalar). Para Play Store usa tu propia llave privada, nunca esta.
+const gradle = path.join(root, 'android', 'app', 'build.gradle')
+let g = fs.readFileSync(gradle, 'utf8')
+if (!g.includes('// MAMAYS-FIRMA')) {
+  g = g.replace(/android\s*\{/, `android {
+    // MAMAYS-FIRMA: llave de PRUEBAS compartida (resources/signing). Solo para APK de prueba.
+    signingConfigs {
+        debug {
+            storeFile file("../../resources/signing/mamays-pruebas.keystore")
+            storePassword "mamays-pruebas"
+            keyAlias "mamays"
+            keyPassword "mamays-pruebas"
+        }
+    }`)
+  // Versión automática: cada compilación de GitHub sube el número (APK #5 → versión 2.3.5)
+  g = g.replace(/versionCode\s+\d+/, 'versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")')
+  g = g.replace(/versionName\s+"[^"]*"/, 'versionName "2.3." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")')
+  fs.writeFileSync(gradle, g)
+}
+
+// 4) Copiar la web compilada dentro del APK
 run('npx cap sync android')
 console.log('\n✅ Proyecto Android listo en ./android\n   - Android Studio: npm run android:open → Build > Build APK(s)\n   - Terminal:       cd android && ./gradlew assembleDebug')

@@ -5,7 +5,8 @@
  */
 import type { Api, ImageKind } from './api'
 import type {
-  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, SignUpInput,
+  AppNotification, Dish, DishView, Extra, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, Review,
+  ReviewsInput, SignUpInput,
 } from '../lib/types'
 import { blobToDataUrl, codigoPedido, expValida, luhn, sleep, uid } from '../lib/format'
 import { MOTIVOS_PAGO, RESERVA_MINUTOS, ZONA_COORDS } from '../lib/constants'
@@ -20,10 +21,11 @@ interface DB {
   orders: Order[]
   notifications: AppNotification[]
   favorites: Record<string, string[]>
+  reviews: Review[]
   session: string | null
 }
 
-const KEY = 'mamays-demo-v3'
+const KEY = 'mamays-demo-v4'
 const limaDate = (d: Date | string) =>
   new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Lima' })
 
@@ -32,7 +34,7 @@ function blankProfile(p: Partial<Profile>): Profile {
     id: uid(), role: 'comensal', full_name: '', email: '', phone: '', zone: 'Puno Centro', address: '',
     allergies: [], other_allergies: '', preferences: '', avoid_foods: '', public_zone_label: '', bio: '',
     home_description: '', show_home: false, home_photos: [], avatar_url: '', yape_name: '', yape_phone: '',
-    lat: null, lng: null, ...p,
+    lat: null, lng: null, onboarded: false, ...p,
   }
 }
 
@@ -40,7 +42,7 @@ function seed(): DB {
   const now = new Date()
   const iso = (msAgo = 0) => new Date(now.getTime() - msAgo).toISOString()
   const mk = (p: Partial<Profile>, email: string): UserRow => ({
-    profile: blankProfile({ ...p, email, role: p.role ?? 'mamita' }),
+    profile: blankProfile({ ...p, email, role: p.role ?? 'mamita', onboarded: true }),
     password: 'demo123',
   })
   const jitter = (z: string, k: number): [number, number] => {
@@ -74,27 +76,33 @@ function seed(): DB {
   const d = (mamita_id: string, name: string, price: number, portions: number, photo: RealPhoto, extra: Partial<Dish>): Dish => ({
     id: uid(), mamita_id, name, description: '', category: 'Tradicional', price, portions, ingredients: '',
     allergens: [], tags: [], delivery_mode: 'ambos', delivery_cost: 3, available_from: '11:30', available_to: '15:00',
-    conservation: 'Consumir fresco', photos: [photoUrl(photo)], paused: false, created_at: iso(++n * 60000), ...extra,
+    conservation: 'Consumir fresco', photos: [photoUrl(photo)], paused: false, extras: [], dine_in: false, created_at: iso(++n * 60000), ...extra,
   })
   const dishes: Dish[] = [
     d(juana, 'Arroz chaufa con cecina', 12, 4, PHOTOS.chaufa, { description: 'Chaufa al wok con cecina, huevo y plátano frito, como en casa.',
-      ingredients: 'arroz, cecina, huevo, plátano, cebolla china, sillao, kion, ajo', allergens: ['Soya', 'Huevo'], tags: ['Se puede recalentar'], delivery_cost: 2.5 }),
+      ingredients: 'arroz, cecina, huevo, plátano, cebolla china, sillao, kion, ajo', allergens: ['Soya', 'Huevo'], tags: ['Se puede recalentar'], delivery_cost: 2.5,
+      available_from: '12:00', available_to: '18:30',
+      extras: [{ id: 'gel', name: 'Gelatina de fresa', price: 2 }, { id: 'chi', name: 'Chicha morada (vaso)', price: 2.5 }, { id: 'ens', name: 'Ensalada de pepino', price: 1.5 }] }),
     d(juana, 'Cau cau', 13, 3, PHOTOS.caucau, { description: 'Guiso criollo de mondongo y papa con palillo y hierbabuena.',
-      ingredients: 'mondongo, papa amarilla, ají amarillo, palillo, hierbabuena, cebolla, ajo, arroz', allergens: [], tags: ['Se puede recalentar'] }),
+      ingredients: 'mondongo, papa amarilla, ají amarillo, palillo, hierbabuena, cebolla, ajo, arroz', allergens: [], tags: ['Se puede recalentar'],
+      extras: [{ id: 'arr', name: 'Porción extra de arroz', price: 1.5 }, { id: 'maz', name: 'Mazamorra morada', price: 3 }] }),
     d(juana, 'Caldo de gallina', 12, 6, PHOTOS.caldo, { category: 'Sopas', description: 'Caldo bien concentrado con fideo, papa y huevo. Levanta muertos.',
       ingredients: 'gallina, fideos, papa, huevo, kion, cebolla china', allergens: ['Gluten', 'Huevo'], tags: ['Se puede recalentar'] }),
     d(teo, 'Pejerrey frito del Titicaca', 15, 1, PHOTOS.pejerrey, { description: 'Pejerrey del lago, crocante por fuera y jugoso por dentro, con papas y ensalada.',
       ingredients: 'pejerrey, harina, papa, arroz, limón, ensalada', allergens: ['Pescado', 'Gluten'], tags: ['Consumir fresco'], delivery_mode: 'delivery', delivery_cost: 3, available_from: '12:00', available_to: '15:30' }),
     d(teo, 'Chairo puneño', 13, 6, PHOTOS.chairo, { category: 'Sopas', description: 'Sopa contundente del altiplano con chuño, chalona y habas.',
-      ingredients: 'carne de res, chalona, chuño, habas, trigo, papa, zapallo, hierbabuena', allergens: ['Gluten'], tags: ['Se puede recalentar'] }),
+      ingredients: 'carne de res, chalona, chuño, habas, trigo, papa, zapallo, hierbabuena', allergens: ['Gluten'], tags: ['Se puede recalentar'],
+      dine_in: true, extras: [{ id: 'pan', name: 'Pan de Chuquibambilla', price: 1 }, { id: 'mat', name: 'Mate de muña', price: 1.5 }] }),
     d(teo, 'Kispiñas', 5, 10, PHOTOS.kispinas, { category: 'Saludable', description: 'Panecillos aymaras de harina de quinua cocidos al vapor. Ideales para el lonche.',
-      ingredients: 'harina de quinua, cal, sal, agua', allergens: [], tags: ['Vegano', 'Saludable'], delivery_cost: 2 }),
+      ingredients: 'harina de quinua, cal, sal, agua', allergens: [], tags: ['Vegano', 'Saludable'], delivery_cost: 2,
+      available_from: '12:00', available_to: '18:30', dine_in: true }),
     d(marta, 'Olluquito con pollo', 15, 5, PHOTOS.olluquitoPollo, { description: 'Guiso tradicional con olluco en tiritas y pollo, con su arroz blanco.',
       ingredients: 'olluco, pollo, ají panca, ajo, cebolla, arroz, perejil', allergens: [], tags: ['Se puede recalentar'], delivery_mode: 'recojo', delivery_cost: null, available_from: '12:00', available_to: '14:30' }),
     d(marta, 'Olluquito con cerdo', 15, 0, PHOTOS.olluquitoCerdo, { description: 'La versión serrana: olluco con cerdo y arroz graneadito.',
       ingredients: 'olluco, carne de cerdo, ají panca, ajo, cebolla, arroz', allergens: [], tags: ['Se puede recalentar'], delivery_mode: 'recojo', delivery_cost: null }),
     d(elena, 'Chairo de la casa', 12, 4, PHOTOS.chairo2, { category: 'Sopas', description: 'Chairo con chuño negro, charqui y mote. Receta de la abuela.',
-      ingredients: 'charqui, chuño, mote, habas, papa, zanahoria, hierbabuena, maní tostado', allergens: ['Maní'], tags: ['Se puede recalentar', 'Consumir fresco'], delivery_cost: 2 }),
+      ingredients: 'charqui, chuño, mote, habas, papa, zanahoria, hierbabuena, maní tostado', allergens: ['Maní'], tags: ['Se puede recalentar', 'Consumir fresco'], delivery_cost: 2,
+      dine_in: true }),
     d(elena, 'Jugo de quinua', 4, 12, PHOTOS.jugoQuinua, { category: 'Saludable', description: 'Bebida tibia de quinua con manzana y canela.',
       ingredients: 'quinua, manzana, canela, clavo, azúcar, leche', allergens: ['Lactosa'], tags: ['Vegetariano', 'Saludable'], delivery_cost: 2 }),
   ]
@@ -109,11 +117,24 @@ function seed(): DB {
     receiver_phone: comensal.profile.phone, payer_name: comensal.profile.full_name, notes: '', voucher_url: '',
     payment_id: 'DEMO-YAPE-4069714', payment_detail: 'accredited', paid_at: ayer,
     reserved_until: null, history: ['enviado', 'aceptado', 'preparando', 'listo', 'entregado'].map((s, i) => ({ status: s as OrderStatus, at: new Date(new Date(ayer).getTime() + i * 600000).toISOString() })),
-    rating: 5, review: '¡Sabor de casa de verdad!', items: [{ dish_id: chaufa.id, dish_name: chaufa.name, unit_price: 12, qty: 1, photo: chaufa.photos[0] }],
-    created_at: ayer,
+    rating: 5, review: '¡Sabor de casa de verdad!', items: [{ dish_id: chaufa.id, dish_name: chaufa.name, unit_price: 12, qty: 1, photo: chaufa.photos[0], extras: [], extras_total: 0 }],
+    guests: 1, terms_accepted_at: null, created_at: ayer,
   }]
+  const cp = comensal.profile
+  const rv = (kind: Review['kind'], dish: Dish | null, mamita_id: string, rating: number | null, body: string, author = cp, extra: Partial<Review> = {}): Review => ({
+    id: uid(), kind, dish_id: dish?.id ?? null, mamita_id, order_id: kind === 'comment' ? null : orders[0].id, author_id: author.id,
+    author_name: author.full_name, rating, body, verified: kind !== 'comment', reply: '', replied_at: null, created_at: ayer, ...extra,
+  })
+  const vecina = blankProfile({ full_name: 'Rocío Ticona' }), profe = blankProfile({ full_name: 'Prof. Hugo Q.' })
+  const reviews: Review[] = [
+    rv('mamita', null, juana, 5, '¡Sabor de casa de verdad! Muy puntual y amable.'),
+    rv('dish', chaufa, juana, 5, 'El chaufa con cecina estuvo buenazo, porción generosa.', cp, { reply: '¡Gracias, hijito! Te espero la próxima semana 😊', replied_at: ayer }),
+    rv('comment', dishes[4], teo, null, '¿El chairo lleva chalona de cordero o de alpaca?', vecina, { reply: 'De alpaca, como en Puno 🙂', replied_at: ayer }),
+    rv('comment', dishes[3], teo, null, 'El pejerrey llega crocante aun en delivery, recomendado.', profe, { verified: true }),
+    rv('comment', dishes[0], juana, null, 'La gelatina de fresa de extra es lo máximo.', vecina),
+  ]
 
-  return { v: 3, users: [...mamitas, comensal], dishes, orders, notifications: [], favorites: {}, session: null }
+  return { v: 4, users: [...mamitas, comensal], dishes, orders, notifications: [], favorites: {}, reviews, session: null }
 }
 
 export class LocalApi implements Api {
@@ -126,7 +147,7 @@ export class LocalApi implements Api {
   constructor() {
     let db: DB | null = null
     try { db = JSON.parse(localStorage.getItem(KEY) || 'null') } catch { db = null }
-    this.db = db && db.v === 3 ? db : seed()
+    this.db = db && db.v === 4 ? db : seed()
     try { localStorage.setItem(KEY, JSON.stringify(this.db)) } catch { /* sin almacenamiento: funciona en memoria */ }
   }
 
@@ -171,13 +192,14 @@ export class LocalApi implements Api {
   private view(d: Dish): DishView {
     const { sold, reserved } = this.counts(d.id)
     const m = this.db.users.find((u) => u.profile.id === d.mamita_id)!.profile
-    const mr = this.db.orders.filter((o) => o.mamita_id === d.mamita_id && o.rating).map((o) => o.rating!)
-    const dr = this.db.orders.filter((o) => o.rating && o.items.some((i) => i.dish_id === d.id)).map((o) => o.rating!)
-    return { ...d, sold, reserved, available: Math.max(d.portions - sold - reserved, 0), mamita_name: m.full_name,
-      mamita_zone: m.zone, mamita_rating: this.avg(mr), rating: this.avg(dr) }
+    const mr = this.db.reviews.filter((r) => r.kind === 'mamita' && r.mamita_id === d.mamita_id).map((r) => r.rating!)
+    const dr = this.db.reviews.filter((r) => r.kind === 'dish' && r.dish_id === d.id).map((r) => r.rating!)
+    return { ...d, extras: d.extras ?? [], dine_in: !!d.dine_in, sold, reserved, available: Math.max(d.portions - sold - reserved, 0), mamita_name: m.full_name,
+      mamita_zone: m.zone, mamita_rating: this.avg(mr), rating: this.avg(dr),
+      review_count: this.db.reviews.filter((r) => r.dish_id === d.id).length }
   }
   private pub(p: Profile): MamitaPublic {
-    const r = this.db.orders.filter((o) => o.mamita_id === p.id && o.rating).map((o) => o.rating!)
+    const r = this.db.reviews.filter((x) => x.kind === 'mamita' && x.mamita_id === p.id).map((x) => x.rating!)
     return {
       id: p.id, full_name: p.full_name, zone: p.zone, public_zone_label: p.public_zone_label, bio: p.bio,
       home_description: p.show_home ? p.home_description : '', home_photos: p.show_home ? p.home_photos : [],
@@ -235,16 +257,20 @@ export class LocalApi implements Api {
     if (me.role !== 'mamita') throw new Error('Solo las mamitas pueden publicar platos.')
     if (!input.ingredients || input.ingredients.trim().length < 3) throw new Error('Los ingredientes son obligatorios.')
     if (input.delivery_mode !== 'recojo' && (input.delivery_cost == null || input.delivery_cost < 0)) throw new Error('Indica un costo de delivery válido.')
-    let d = input.id ? this.db.dishes.find((x) => x.id === input.id) : undefined
+    if (input.extras && (input.extras.length > 10 || input.extras.some((x) => x.name.trim().length < 2 || !(x.price >= 0 && x.price <= 50)))) {
+      throw new Error('Revisa los extras: nombre de al menos 2 letras y precio entre S/ 0 y S/ 50.')
+    }
+    let d: Dish | undefined = input.id ? this.db.dishes.find((x) => x.id === input.id) : undefined
     if (d && d.mamita_id !== me.id) throw new Error('No puedes editar platos de otra mamita.')
     if (!d) {
       d = { id: uid(), mamita_id: me.id, name: '', description: '', category: 'Tradicional', price: 0, portions: 0, ingredients: '',
         allergens: [], tags: [], delivery_mode: 'ambos', delivery_cost: null, available_from: '11:30', available_to: '15:00',
-        conservation: '', photos: [], paused: false, created_at: new Date().toISOString() }
+        conservation: '', photos: [], paused: false, extras: [], dine_in: false, created_at: new Date().toISOString() }
       this.db.dishes.unshift(d)
     }
-    Object.assign(d, input, { mamita_id: me.id, delivery_cost: input.delivery_mode === 'recojo' ? null : input.delivery_cost ?? d.delivery_cost })
-    this.save(); return this.delay(d)
+    const dish: Dish = d
+    Object.assign(dish, input, { mamita_id: me.id, delivery_cost: input.delivery_mode === 'recojo' ? null : input.delivery_cost ?? dish.delivery_cost })
+    this.save(); return this.delay(dish)
   }
   async deleteDish(id: string) {
     const me = this.me()
@@ -262,7 +288,13 @@ export class LocalApi implements Api {
     const mamita = this.db.users.find((u) => u.profile.id === input.mamita_id && u.profile.role === 'mamita')?.profile
     if (!mamita) throw new Error('MAMITA_NO_EXISTE')
     if (!input.items.length) throw new Error('CARRITO_VACIO')
+    if (!['delivery', 'recojo', 'en_casa'].includes(input.mode)) throw new Error('MODALIDAD_INVALIDA')
     if (input.mode === 'delivery' && input.delivery_address.trim().length < 5) throw new Error('FALTA_DIRECCION')
+    const guests = input.mode === 'en_casa' ? Math.round(input.guests ?? 1) : 1
+    if (input.mode === 'en_casa') {
+      if (!input.terms_accepted) throw new Error('TERMINOS_REQUERIDOS')
+      if (guests < 1 || guests > 6) throw new Error('COMENSALES_INVALIDOS')
+    }
     let subtotal = 0, delivery = 0
     const items = input.items.map((l) => {
       const d = this.db.dishes.find((x) => x.id === l.dish_id)
@@ -271,12 +303,20 @@ export class LocalApi implements Api {
       if (d.paused) throw new Error(`PLATO_PAUSADO:${d.name}`)
       if (input.mode === 'delivery' && d.delivery_mode === 'recojo') throw new Error(`SOLO_RECOJO:${d.name}`)
       if (input.mode === 'recojo' && d.delivery_mode === 'delivery') throw new Error(`SOLO_DELIVERY:${d.name}`)
+      if (input.mode === 'en_casa' && !d.dine_in) throw new Error(`SIN_COMER_EN_CASA:${d.name}`)
+      const extras: Extra[] = []
+      for (const id of new Set(l.extras ?? [])) {
+        const x = (d.extras ?? []).find((e) => e.id === id)
+        if (!x) throw new Error(`EXTRA_INVALIDO:${d.name}`)
+        extras.push({ ...x })
+      }
+      const extrasTotal = extras.reduce((a, x) => a + x.price, 0)
       const { sold, reserved } = this.counts(d.id)
       if (l.qty < 1 || l.qty > 20) throw new Error('CANTIDAD_INVALIDA')
       if (l.qty > d.portions - sold - reserved) throw new Error(`SIN_STOCK:${d.name}`)
-      subtotal += d.price * l.qty
+      subtotal += (d.price + extrasTotal) * l.qty
       if (input.mode === 'delivery') delivery = Math.max(delivery, d.delivery_cost ?? 0)
-      return { dish_id: d.id, dish_name: d.name, unit_price: d.price, qty: l.qty, photo: d.photos[0] ?? '' }
+      return { dish_id: d.id, dish_name: d.name, unit_price: d.price, qty: l.qty, photo: d.photos[0] ?? '', extras, extras_total: extrasTotal }
     })
     const now = new Date()
     if (!['yape', 'tarjeta', 'yape_manual', 'efectivo'].includes(input.payment_method)) throw new Error('PAGO_INVALIDO')
@@ -290,6 +330,7 @@ export class LocalApi implements Api {
       payment_id: '', payment_detail: '', paid_at: null,
       reserved_until: status === 'reservado' ? new Date(now.getTime() + RESERVA_MINUTOS * 60000).toISOString() : null,
       history: [{ status, at: now.toISOString() }], rating: null, review: '', items, created_at: now.toISOString(),
+      guests, terms_accepted_at: input.mode === 'en_casa' ? now.toISOString() : null,
     }
     this.db.orders.unshift(o)
     if (status === 'enviado') this.notify(mamita.id, '¡Nuevo pedido!', `${me.full_name} pidió (${o.code}), pago en efectivo.`, o.id)
@@ -333,14 +374,14 @@ export class LocalApi implements Api {
     if (!ok) throw new Error('TRANSICION_NO_PERMITIDA')
     const prev = o.status
     o.status = status
-    if (status === 'aceptado' && o.mode === 'recojo') {
+    if (status === 'aceptado' && (o.mode === 'recojo' || o.mode === 'en_casa')) {
       o.pickup_address = this.db.users.find((u) => u.profile.id === o.mamita_id)?.profile.address ?? ''
     }
     o.history.push({ status, at: new Date().toISOString() })
     const msg: Partial<Record<OrderStatus, string>> = {
       aceptado: '¡La mamita aceptó tu pedido! Ya verificó tu pago.',
       preparando: 'Tu almuerzo se está preparando con mucho cariño.',
-      listo: 'Tu pedido está listo para recojo.',
+      listo: o.mode === 'en_casa' ? '¡Tu mesa está lista! La mamita te espera.' : 'Tu pedido está listo para recojo.',
       en_camino: 'Tu pedido va en camino.',
       entregado: '¡Buen provecho! Cuéntanos qué tal estuvo.',
       rechazado: `La mamita no pudo aceptar tu pedido. ${reason}`.trim(),
@@ -353,14 +394,52 @@ export class LocalApi implements Api {
     }
     this.save()
   }
-  async rateOrder(id: string, rating: number, review: string) {
+  async submitReviews(id: string, input: ReviewsInput) {
     const me = this.me()
     const o = this.db.orders.find((x) => x.id === id && x.comensal_id === me.id)
     if (!o) throw new Error('PEDIDO_NO_EXISTE')
     if (o.status !== 'entregado') throw new Error('AUN_NO_ENTREGADO')
     if (o.rating) throw new Error('YA_VALORADO')
-    o.rating = Math.min(5, Math.max(1, Math.round(rating))); o.review = review.slice(0, 400)
-    this.notify(o.mamita_id, `Nueva valoración ★${o.rating}`, `${o.comensal_name} valoró su pedido ${o.code}.`, o.id)
+    const ok = (n: number) => Number.isInteger(n) && n >= 1 && n <= 5
+    if (!ok(input.mamita.rating) || input.dishes.some((d) => !ok(d.rating))) throw new Error('VALORACION_INVALIDA')
+    if (input.dishes.some((d) => !o.items.some((i) => i.dish_id === d.dish_id))) throw new Error('PLATO_NO_ESTA_EN_EL_PEDIDO')
+    const now = new Date().toISOString()
+    const base = { mamita_id: o.mamita_id, order_id: o.id, author_id: me.id, author_name: me.full_name, verified: true, reply: '', replied_at: null, created_at: now }
+    this.db.reviews.unshift({ ...base, id: uid(), kind: 'mamita', dish_id: null, rating: input.mamita.rating, body: input.mamita.body.slice(0, 500) },
+      ...input.dishes.map((d) => ({ ...base, id: uid(), kind: 'dish' as const, dish_id: d.dish_id, rating: d.rating, body: d.body.slice(0, 500) })))
+    o.rating = input.mamita.rating; o.review = input.mamita.body.slice(0, 400)
+    this.notify(o.mamita_id, `Nueva calificación ★${o.rating}`, `${o.comensal_name} calificó su pedido ${o.code}.`, o.id)
+    this.save()
+  }
+  async listReviews(f: { dishId?: string; mamitaId?: string }) {
+    const r = this.db.reviews.filter((x) => (f.dishId ? x.dish_id === f.dishId : true) && (f.mamitaId ? x.mamita_id === f.mamitaId : true))
+    return this.delay([...r].sort((a, b) => b.created_at.localeCompare(a.created_at)), 60)
+  }
+  async addComment(dishId: string, body: string) {
+    const me = this.me()
+    if (me.role !== 'comensal') throw new Error('SOLO_COMENSALES')
+    const d = this.db.dishes.find((x) => x.id === dishId)
+    if (!d) throw new Error('PLATO_NO_EXISTE')
+    if (body.trim().length < 2) throw new Error('COMENTARIO_VACIO')
+    const hoy = this.db.reviews.filter((r) => r.author_id === me.id && r.kind === 'comment' && Date.now() - new Date(r.created_at).getTime() < 86400000)
+    if (hoy.length >= 10) throw new Error('DEMASIADOS_COMENTARIOS')
+    const verified = this.db.orders.some((o) => o.comensal_id === me.id && o.status === 'entregado' && o.items.some((i) => i.dish_id === dishId))
+    this.db.reviews.unshift({ id: uid(), kind: 'comment', dish_id: dishId, mamita_id: d.mamita_id, order_id: null, author_id: me.id,
+      author_name: me.full_name, rating: null, body: body.trim().slice(0, 500), verified, reply: '', replied_at: null, created_at: new Date().toISOString() })
+    this.notify(d.mamita_id, `Nuevo comentario en ${d.name}`, `${me.full_name}: ${body.trim().slice(0, 80)}`, null)
+    this.save()
+  }
+  async deleteComment(id: string) {
+    const me = this.me()
+    this.db.reviews = this.db.reviews.filter((r) => !(r.id === id && r.author_id === me.id && r.kind === 'comment'))
+    this.save()
+  }
+  async replyReview(id: string, reply: string) {
+    const me = this.me()
+    const r = this.db.reviews.find((x) => x.id === id && x.mamita_id === me.id)
+    if (!r) throw new Error('RESENA_NO_EXISTE')
+    r.reply = reply.trim().slice(0, 500); r.replied_at = new Date().toISOString()
+    if (r.reply) this.notify(r.author_id, 'La mamita respondió tu comentario', r.reply.slice(0, 120), r.order_id)
     this.save()
   }
 

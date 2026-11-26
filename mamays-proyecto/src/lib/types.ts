@@ -1,7 +1,7 @@
 export type Role = 'comensal' | 'mamita'
 
 export type DeliveryMode = 'delivery' | 'recojo' | 'ambos'
-export type OrderMode = 'delivery' | 'recojo'
+export type OrderMode = 'delivery' | 'recojo' | 'en_casa'
 /** yape = Yape en línea (celular + código) · tarjeta = con 3-D Secure · yape_manual = constancia a la mamita */
 export type PaymentMethod = 'yape' | 'tarjeta' | 'yape_manual' | 'efectivo'
 
@@ -41,6 +41,7 @@ export interface Profile {
   yape_phone: string
   lat: number | null
   lng: number | null
+  onboarded: boolean
 }
 
 export interface MamitaPublic {
@@ -61,6 +62,8 @@ export interface MamitaPublic {
   dish_count: number
 }
 
+export interface Extra { id: string; name: string; price: number }
+
 export interface Dish {
   id: string
   mamita_id: string
@@ -79,6 +82,9 @@ export interface Dish {
   conservation: string
   photos: string[]
   paused: boolean
+  extras: Extra[]
+  /** la mamita recibe comensales en su hogar para este plato */
+  dine_in: boolean
   created_at: string
 }
 
@@ -93,6 +99,7 @@ export type DishView = Dish & DishStock & {
   mamita_zone: string
   mamita_rating: number | null
   rating: number | null
+  review_count: number
 }
 
 export interface OrderItem {
@@ -101,6 +108,8 @@ export interface OrderItem {
   unit_price: number
   qty: number
   photo?: string
+  extras: Extra[]
+  extras_total: number
 }
 
 export interface StatusEvent {
@@ -133,6 +142,8 @@ export interface Order {
   payment_detail: string
   paid_at: string | null
   reserved_until: string | null
+  guests: number
+  terms_accepted_at: string | null
   history: StatusEvent[]
   rating: number | null
   review: string
@@ -153,6 +164,7 @@ export interface AppNotification {
 export interface CartLine {
   dish_id: string
   qty: number
+  extras?: string[]
 }
 
 export interface PlaceOrderInput {
@@ -165,6 +177,9 @@ export interface PlaceOrderInput {
   receiver_phone: string
   payer_name: string
   notes: string
+  guests?: number
+  terms_accepted?: boolean
+  terms_version?: string
 }
 
 export interface SignUpInput {
@@ -195,3 +210,24 @@ export type PayResult =
   | { status: 'rejected'; message: string }
   | { status: 'pending'; message: string }
   | { status: 'challenge'; url?: string; creq?: string; demoCode?: string; maskedPhone?: string }
+
+export interface Review {
+  id: string
+  kind: 'dish' | 'mamita' | 'comment'
+  dish_id: string | null
+  mamita_id: string
+  order_id: string | null
+  author_id: string
+  author_name: string
+  rating: number | null
+  body: string
+  verified: boolean
+  reply: string
+  replied_at: string | null
+  created_at: string
+}
+
+export interface ReviewsInput {
+  mamita: { rating: number; body: string }
+  dishes: { dish_id: string; rating: number; body: string }[]
+}

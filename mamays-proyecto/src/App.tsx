@@ -9,6 +9,7 @@ import { CartPage, ConfirmedPage, PayPage } from './pages/comensal/Checkout'
 import { ComensalProfile, MyOrders, OrderDetail } from './pages/comensal/Account'
 import { NotificationsPage } from './pages/Notifications'
 import { DishForm, MamitaHome, MamitaOrders, MamitaProfile, MamitaSales, MyDishes } from './pages/mamita/MamitaPages'
+import { MamitaGuide, MamitaWelcome } from './pages/mamita/MamitaHelp'
 
 /** Solo deja pasar a usuarios con sesión y el rol correcto */
 function Guard({ role, children }: { role: Role; children: ReactNode }) {
@@ -57,6 +58,8 @@ function Root() {
       <Route path="/mamita/ventas" element={<Guard role="mamita"><MamitaSales /></Guard>} />
       <Route path="/mamita/perfil" element={<Guard role="mamita"><MamitaProfile /></Guard>} />
       <Route path="/mamita/avisos" element={<Guard role="mamita"><NotificationsPage /></Guard>} />
+      <Route path="/mamita/bienvenida" element={<Guard role="mamita"><MamitaWelcome /></Guard>} />
+      <Route path="/mamita/guia" element={<Guard role="mamita"><MamitaGuide /></Guard>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

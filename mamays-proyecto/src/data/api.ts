@@ -1,5 +1,5 @@
 import type {
-  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, SignUpInput,
+  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, Review, ReviewsInput, SignUpInput,
 } from '../lib/types'
 
 export type ImageKind = 'dish' | 'avatar' | 'home' | 'voucher'
@@ -38,7 +38,14 @@ export interface Api {
   listMyOrders(): Promise<Order[]>
   getOrder(id: string): Promise<Order | null>
   setOrderStatus(id: string, status: OrderStatus, reason?: string): Promise<void>
-  rateOrder(id: string, rating: number, review: string): Promise<void>
+  /** Calificación tras la entrega: mamita + cada plato (compra verificada) */
+  submitReviews(orderId: string, input: ReviewsInput): Promise<void>
+
+  // Comentarios y reseñas
+  listReviews(filter: { dishId?: string; mamitaId?: string }): Promise<Review[]>
+  addComment(dishId: string, body: string): Promise<void>
+  deleteComment(id: string): Promise<void>
+  replyReview(id: string, reply: string): Promise<void>
 
   // Pagos en línea (Yape con código de aprobación / tarjeta con 3-D Secure)
   payOnline(orderId: string, input: PayInput): Promise<PayResult>
@@ -75,6 +82,14 @@ export function mensajeError(e: unknown): string {
     'Email not confirmed': 'Confirma tu correo antes de ingresar (revisa tu bandeja de entrada).',
     'Failed to fetch': 'Sin conexión. Revisa tu internet e inténtalo otra vez.',
     PAGO_INVALIDO: 'Ese medio de pago no está disponible.',
+    TERMINOS_REQUERIDOS: 'Para comer en el hogar de la mamita debes aceptar los términos de seguridad y convivencia.',
+    SIN_COMER_EN_CASA: `${extra ?? 'Este plato'} no está disponible para comer en el hogar de la mamita.`,
+    COMENSALES_INVALIDOS: 'Pueden ir de 1 a 6 personas.',
+    EXTRA_INVALIDO: `Uno de los extras de ${extra ?? 'tu plato'} ya no está disponible.`,
+    COMENTARIO_VACIO: 'Escribe tu comentario.',
+    DEMASIADOS_COMENTARIOS: 'Ya comentaste mucho hoy. Inténtalo mañana.',
+    PLATO_NO_ESTA_EN_EL_PEDIDO: 'Ese plato no estaba en tu pedido.',
+    AUN_NO_ENTREGADO: 'Podrás calificar cuando recibas tu pedido.',
     CODIGO_INCORRECTO: `Código incorrecto.${extra ? ` Te quedan ${extra} intentos.` : ''}`,
   }
   for (const k of Object.keys(map)) if (raw.includes(k) || code === k) return map[k]

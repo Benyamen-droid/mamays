@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Api, ImageKind } from './api'
 import type {
-  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, SignUpInput,
+  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, Review, ReviewsInput, SignUpInput,
 } from '../lib/types'
 import { uid } from '../lib/format'
 
@@ -15,11 +15,12 @@ function check<T>(r: { data: T; error: { message: string } | null }): T {
 
 const DISH_FIELDS: (keyof Dish)[] = [
   'name', 'description', 'category', 'price', 'portions', 'ingredients', 'allergens', 'tags', 'delivery_mode',
-  'delivery_cost', 'available_from', 'available_to', 'conservation', 'photos', 'paused',
+  'delivery_cost', 'available_from', 'available_to', 'conservation', 'photos', 'paused', 'extras', 'dine_in',
 ]
 const PROFILE_EDITABLE: (keyof Profile)[] = [
   'full_name', 'phone', 'zone', 'address', 'allergies', 'other_allergies', 'preferences', 'avoid_foods',
   'public_zone_label', 'bio', 'home_description', 'show_home', 'home_photos', 'avatar_url', 'yape_name', 'yape_phone', 'lat', 'lng',
+  'onboarded',
 ]
 
 function mapDish(r: Record<string, unknown>): DishView {
@@ -29,19 +30,23 @@ function mapDish(r: Record<string, unknown>): DishView {
     sold: num(r.sold), reserved: num(r.reserved), available: num(r.available),
     mamita_rating: numOrNull(r.mamita_rating), rating: numOrNull(r.rating),
     allergens: (r.allergens as string[]) ?? [], tags: (r.tags as string[]) ?? [], photos: (r.photos as string[]) ?? [],
+    extras: ((r.extras as DishView['extras']) ?? []).map((x) => ({ ...x, price: Number(x.price) })),
+    dine_in: !!r.dine_in, review_count: num(r.review_count),
   }
 }
 
 function mapOrder(r: Record<string, unknown>): Order {
   const items = ((r.order_items as Record<string, unknown>[]) ?? []).map((i) => ({
     dish_id: String(i.dish_id ?? ''), dish_name: String(i.dish_name), unit_price: num(i.unit_price), qty: num(i.qty), photo: String(i.photo ?? ''),
+    extras: ((i.extras as { id: string; name: string; price: number }[]) ?? []).map((x) => ({ ...x, price: Number(x.price) })),
+    extras_total: num(i.extras_total),
   }))
   let status = r.status as OrderStatus
   if (status === 'reservado' && r.reserved_until && new Date(String(r.reserved_until)).getTime() < Date.now()) status = 'expirado'
   return {
     ...(r as unknown as Order), status, items,
     subtotal: num(r.subtotal), delivery_cost: num(r.delivery_cost), total: num(r.total), rating: numOrNull(r.rating),
-    history: (r.history as Order['history']) ?? [],
+    history: (r.history as Order['history']) ?? [], guests: num(r.guests) || 1,
   }
 }
 
@@ -169,9 +174,25 @@ export class SupabaseApi implements Api {
   async setOrderStatus(id: string, status: OrderStatus, reason = '') {
     check(await this.sb.rpc('set_order_status', { p_order: id, p_status: status, p_reason: reason }))
   }
-  async rateOrder(id: string, rating: number, review: string) {
-    check(await this.sb.rpc('rate_order', { p_order: id, p_rating: rating, p_review: review }))
+  async submitReviews(id: string, input: ReviewsInput) {
+    check(await this.sb.rpc('submit_reviews', { p_order: id, p: input }))
   }
+  async listReviews(f: { dishId?: string; mamitaId?: string }) {
+    let q = this.sb.from('reviews').select('*').order('created_at', { ascending: false }).limit(100)
+    if (f.dishId) q = q.eq('dish_id', f.dishId)
+    if (f.mamitaId) q = q.eq('mamita_id', f.mamitaId)
+    return ((check(await q) ?? []) as Review[])
+  }
+  async addComment(dishId: string, body: string) {
+    check(await this.sb.rpc('add_comment', { p_dish: dishId, p_body: body }))
+  }
+  async deleteComment(id: string) {
+    check(await this.sb.from('reviews').delete().eq('id', id))
+  }
+  async replyReview(id: string, reply: string) {
+    check(await this.sb.rpc('reply_review', { p_review: id, p_reply: reply }))
+  }
+
 
   // ---------- Pagos en línea: la Edge Function "pagar" habla con Mercado Pago ----------
   private async callPagar(body: Record<string, unknown>): Promise<PayResult> {

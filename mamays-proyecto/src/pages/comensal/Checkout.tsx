@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Banknote, Check, CircleCheck, Copy, CreditCard, ShoppingBag, Store, Trash2, Truck, TriangleAlert, Users, Wallet } from 'lucide-react'
+import { Banknote, Check, CircleCheck, Copy, CreditCard, DoorOpen, ShieldCheck, ShoppingBag, Store, Trash2, Truck, TriangleAlert, Users, Wallet } from 'lucide-react'
 import { api, mensajeError } from '../../data'
-import { useAuth, useCart, useToast } from '../../context/AppContext'
-import type { DishView, MamitaPublic, Order, OrderMode, PaymentMethod, PayResult } from '../../lib/types'
+import { lineKey, useAuth, useCart, useToast } from '../../context/AppContext'
+import type { CartLine, DishView, MamitaPublic, Order, OrderMode, PaymentMethod, PayResult } from '../../lib/types'
 import { celularValido, soles } from '../../lib/format'
 import { OrderItems, OrderTotals, ReservaCountdown } from '../../components/orders'
-import { BackButton, Button, Card, DishPhoto, EmptyState, Eyebrow, Field, ImagePicker, Loading, PageTitle, Screen, Segmented, Stepper } from '../../components/ui'
+import { BackButton, Button, Card, DishPhoto, EmptyState, Eyebrow, Field, ImagePicker, Loading, PageTitle, Screen, Segmented, Sheet, Stepper } from '../../components/ui'
 import { CardPayForm, ThreeDSModal, YapeMark, YapePayForm } from '../../components/payments'
-import { PAYMENT_LABEL } from '../../lib/constants'
+import { PAYMENT_LABEL, TERMINOS_HOGAR, TERMINOS_VERSION } from '../../lib/constants'
 
 /* ===================== CARRITO ===================== */
 export function CartPage() {
@@ -25,6 +25,9 @@ export function CartPage() {
   const [forOther, setForOther] = useState(false)
   const [receiver, setReceiver] = useState({ name: '', phone: '' })
   const [notes, setNotes] = useState('')
+  const [guests, setGuests] = useState(1)
+  const [termsOk, setTermsOk] = useState(false)
+  const [termsOpen, setTermsOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
@@ -43,15 +46,18 @@ export function CartPage() {
   }, [cart.lines.map((l) => l.dish_id).join()])
 
   const rows = cart.lines.map((l) => ({ line: l, d: dishes[l.dish_id] }))
-  const valid = rows.filter((r) => r.d) as { line: { dish_id: string; qty: number }; d: DishView }[]
+  const valid = rows.filter((r) => r.d) as { line: CartLine; d: DishView }[]
   const allowDelivery = valid.every((r) => r.d.delivery_mode !== 'recojo')
   const allowRecojo = valid.every((r) => r.d.delivery_mode !== 'delivery')
+  const allowCasa = valid.length > 0 && valid.every((r) => r.d.dine_in)
   useEffect(() => {
-    if (mode === 'delivery' && !allowDelivery && allowRecojo) setMode('recojo')
-    if (mode === 'recojo' && !allowRecojo && allowDelivery) setMode('delivery')
-  }, [allowDelivery, allowRecojo, mode])
+    const ok = { delivery: allowDelivery, recojo: allowRecojo, en_casa: allowCasa }
+    if (!ok[mode]) setMode(allowDelivery ? 'delivery' : allowRecojo ? 'recojo' : 'en_casa')
+  }, [allowDelivery, allowRecojo, allowCasa, mode])
 
-  const subtotal = valid.reduce((a, r) => a + r.d.price * r.line.qty, 0)
+  const extrasDe = (d: DishView, ids: string[] = []) => d.extras.filter((x) => ids.includes(x.id))
+  const unitPrice = (d: DishView, ids?: string[]) => d.price + extrasDe(d, ids).reduce((a, x) => a + x.price, 0)
+  const subtotal = valid.reduce((a, r) => a + unitPrice(r.d, r.line.extras) * r.line.qty, 0)
   const deliveryCost = mode === 'delivery' ? Math.max(0, ...valid.map((r) => r.d.delivery_cost ?? 0)) : 0
   const problems = useMemo(() => rows.flatMap((r) => {
     if (!r.d) return ['Un plato de tu carrito ya no existe.']
@@ -60,16 +66,19 @@ export function CartPage() {
   }), [rows])
   const alergias = profile?.allergies ?? []
   const choques = valid.flatMap((r) => r.d.allergens.filter((a) => alergias.includes(a)).map((a) => `${r.d.name}: ${a}`))
+  const alergenosPedido = valid.filter((r) => r.d.allergens.length).map((r) => ({ name: r.d.name, list: r.d.allergens }))
 
   async function submit() {
     if (!cart.mamitaId) return
     if (mode === 'delivery' && address.trim().length < 5) return toast('Escribe la dirección de entrega', 'error')
     if (forOther && (receiver.name.trim().length < 3 || !celularValido(receiver.phone))) return toast('Completa nombre y celular de quien recibe', 'error')
-    if (!allowDelivery && !allowRecojo) return toast('Estos platos no comparten modalidad de entrega. Pídelos por separado.', 'error')
+    if (!allowDelivery && !allowRecojo && !allowCasa) return toast('Estos platos no comparten modalidad de entrega. Pídelos por separado.', 'error')
+    if (mode === 'en_casa' && !termsOk) { setTermsOpen(true); return toast('Acepta los términos de seguridad para comer en el hogar', 'error') }
     setBusy(true)
     try {
       const id = await api.placeOrder({
-        mamita_id: cart.mamitaId, items: valid.map((r) => ({ dish_id: r.d.id, qty: r.line.qty })), mode, payment_method: pay,
+        mamita_id: cart.mamitaId, items: valid.map((r) => ({ dish_id: r.d.id, qty: r.line.qty, extras: r.line.extras ?? [] })), mode, payment_method: pay,
+        guests: mode === 'en_casa' ? guests : 1, terms_accepted: mode === 'en_casa' && termsOk, terms_version: TERMINOS_VERSION,
         delivery_address: address, receiver_name: forOther ? receiver.name : '', receiver_phone: forOther ? receiver.phone.replace(/\D/g, '') : '',
         payer_name: profile?.full_name ?? '', notes,
       })
@@ -92,29 +101,55 @@ export function CartPage() {
 
       <div className="space-y-3">
         {rows.map(({ line, d }) => (
-          <Card key={line.dish_id} className="flex items-center gap-3 !p-3">
+          <Card key={lineKey(line)} className="flex items-center gap-3 !p-3">
             <DishPhoto src={d?.photos[0]} alt={d?.name ?? 'Plato'} className="h-16 w-16 rounded-2xl object-cover" />
-            <div className="flex-1">
+            <div className="min-w-0 flex-1">
               <div className="font-bold leading-tight">{d?.name ?? 'Plato no disponible'}</div>
-              <div className="text-sm font-semibold text-guinda">{d ? soles(d.price * line.qty) : '—'}</div>
-              {d && <Stepper value={line.qty} onChange={(n) => cart.setQty(line.dish_id, n)} max={Math.max(1, Math.min(20, d.available))} />}
+              {d && extrasDe(d, line.extras).length > 0 && (
+                <div className="text-xs text-gris">+ {extrasDe(d, line.extras).map((x) => x.name).join(', ')}</div>
+              )}
+              <div className="text-sm font-semibold text-guinda">{d ? soles(unitPrice(d, line.extras) * line.qty) : '—'}</div>
+              {d && <Stepper value={line.qty} onChange={(n) => cart.setQty(lineKey(line), n)} max={Math.max(1, Math.min(20, d.available))} />}
             </div>
-            <button onClick={() => cart.setQty(line.dish_id, 0)} aria-label="Quitar" className="grid h-10 w-10 place-items-center rounded-full text-gris hover:bg-crema"><Trash2 size={18} /></button>
+            <button onClick={() => cart.setQty(lineKey(line), 0)} aria-label="Quitar" className="grid h-10 w-10 place-items-center rounded-full text-gris hover:bg-crema"><Trash2 size={18} /></button>
           </Card>
         ))}
       </div>
       {problems.length > 0 && <div className="mt-3 rounded-2xl bg-[#fde8e8] p-3 text-sm font-semibold text-[#a32020]" role="alert">{problems.join(' ')}</div>}
-      {choques.length > 0 && <div className="mt-3 flex gap-2 rounded-2xl bg-[#fff4ea] p-3 text-sm text-[#9a4b0f]"><TriangleAlert size={18} className="shrink-0" /> Contiene alérgenos que marcaste: {choques.join(', ')}.</div>}
+      {alergenosPedido.length > 0 && (
+        <div className={`mt-3 rounded-2xl p-3 text-sm ${choques.length ? 'border border-[#f0b4b4] bg-[#fde8e8] text-[#8f1f1f]' : 'bg-[#fff4ea] text-[#7a3d0c]'}`} role="note" aria-label="Alérgenos de tu pedido">
+          <div className="flex items-center gap-2 font-bold"><TriangleAlert size={17} /> Alérgenos de tu pedido</div>
+          <ul className="mt-1 space-y-0.5 pl-6">
+            {alergenosPedido.map((a) => <li key={a.name}><b>{a.name}:</b> {a.list.map((x) => alergias.includes(x) ? `${x} (tu alergia)` : x).join(', ')}</li>)}
+          </ul>
+        </div>
+      )}
 
       <h2 className="mb-2 mt-6 text-sm font-extrabold">¿Cómo lo recibes?</h2>
       <Segmented value={mode} onChange={setMode} options={[
         ...(allowDelivery ? [{ value: 'delivery' as const, label: `Delivery · ${soles(Math.max(0, ...valid.map((r) => r.d.delivery_cost ?? 0)))}`, icon: <Truck size={20} /> }] : []),
         ...(allowRecojo ? [{ value: 'recojo' as const, label: 'Recojo · S/ 0.00', icon: <Store size={20} /> }] : []),
+        ...(allowCasa ? [{ value: 'en_casa' as const, label: 'Comer en el hogar', icon: <DoorOpen size={20} /> }] : []),
       ]} />
-      {mode === 'delivery' ? (
+      {mode === 'delivery' && (
         <div className="mt-3"><Field label="Dirección de entrega"><input className="field-input" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Av., jirón, número, referencia" /></Field></div>
-      ) : (
+      )}
+      {mode === 'recojo' && (
         <p className="mt-2 rounded-2xl bg-crema-200 p-3 text-[13px] text-cafe">Recoges en la zona <b>{mamita?.public_zone_label || mamita?.zone}</b>. La dirección exacta te llega cuando la mamita acepte tu pedido.</p>
+      )}
+      {mode === 'en_casa' && (
+        <div className="mt-3 space-y-3 rounded-[20px] border border-borde bg-white p-4">
+          <p className="text-[13px] text-cafe">Comerás en el hogar de <b>{mamita?.full_name}</b>, en la zona <b>{mamita?.public_zone_label || mamita?.zone}</b>. La dirección exacta te llega cuando ella acepte tu pedido.</p>
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-bold">¿Cuántas personas van?</span>
+            <Stepper value={guests} onChange={setGuests} min={1} max={6} label={guests === 1 ? 'pers.' : 'pers.'} />
+          </div>
+          <div className={`rounded-2xl border p-3 ${termsOk ? 'border-ok bg-[#e8f5ee]' : 'border-[#f0b4b4] bg-[#fff6f6]'}`}>
+            <div className="flex items-center gap-2 text-sm font-bold"><ShieldCheck size={17} className={termsOk ? 'text-ok' : 'text-[#b42323]'} /> Términos de seguridad y convivencia</div>
+            <p className="mt-1 text-xs text-gris">{termsOk ? 'Aceptaste los términos. ¡Gracias por cuidar este espacio!' : 'Es obligatorio leerlos y aceptarlos para comer en un hogar.'}</p>
+            <button type="button" onClick={() => setTermsOpen(true)} className="mt-2 text-sm font-bold text-guinda underline">{termsOk ? 'Ver términos' : 'Leer y aceptar'}</button>
+          </div>
+        </div>
       )}
 
       <button type="button" onClick={() => setForOther(!forOther)} aria-pressed={forOther}
@@ -160,7 +195,7 @@ export function CartPage() {
 
       <Card className="mt-5">
         <div className="flex justify-between text-sm"><span className="text-gris">Platos</span><span>{soles(subtotal)}</span></div>
-        <div className="mt-1 flex justify-between text-sm"><span className="text-gris">{mode === 'delivery' ? 'Delivery' : 'Recojo'}</span><span>{soles(deliveryCost)}</span></div>
+        <div className="mt-1 flex justify-between text-sm"><span className="text-gris">{mode === 'delivery' ? 'Delivery' : mode === 'en_casa' ? `En el hogar · ${guests} ${guests === 1 ? 'persona' : 'personas'}` : 'Recojo'}</span><span>{soles(deliveryCost)}</span></div>
         <div className="mt-2 flex justify-between border-t border-borde pt-2 text-lg font-extrabold"><span>Total</span><span className="text-guinda">{soles(subtotal + deliveryCost)}</span></div>
       </Card>
 
@@ -170,7 +205,36 @@ export function CartPage() {
         </Button>
         {pay !== 'efectivo' && <p className="mt-2 text-center text-xs text-gris">Reservamos tu porción por 15 minutos mientras pagas.</p>}
       </div>
+      <TermsSheet open={termsOpen} onClose={() => setTermsOpen(false)} accepted={termsOk} onAccept={() => { setTermsOk(true); setTermsOpen(false) }} />
     </Screen>
+  )
+}
+
+/** Términos de seguridad y convivencia para comer en el hogar de una mamita (aceptación obligatoria) */
+function TermsSheet({ open, onClose, accepted, onAccept }: { open: boolean; onClose: () => void; accepted: boolean; onAccept: () => void }) {
+  const [check, setCheck] = useState(accepted)
+  useEffect(() => { if (open) setCheck(accepted) }, [open, accepted])
+  return (
+    <Sheet open={open} onClose={onClose} title="Comer en el hogar">
+      <p className="text-sm text-gris">Vas a ser recibido en una casa de familia. Para que sea seguro y agradable para todos:</p>
+      <ol className="mt-3 space-y-2.5">
+        {TERMINOS_HOGAR.map((t, i) => (
+          <li key={t.t} className="flex gap-3 text-sm">
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-guinda-50 text-xs font-bold text-guinda">{i + 1}</span>
+            <span><b>{t.t}.</b> {t.d}</span>
+          </li>
+        ))}
+      </ol>
+      <label className="mt-4 flex items-start gap-3 rounded-2xl bg-crema p-3 text-sm">
+        <input type="checkbox" className="mt-0.5 h-5 w-5 accent-[#A3173B]" checked={check} onChange={(e) => setCheck(e.target.checked)} />
+        He leído y acepto los términos de seguridad y convivencia para comer en el hogar de la mamita.
+      </label>
+      <div className="mt-4 space-y-2">
+        <Button disabled={!check} onClick={onAccept}>Aceptar términos</Button>
+        <Button variant="secondary" onClick={onClose}>Volver</Button>
+      </div>
+      <p className="mt-2 text-center text-[11px] text-gris">Versión {TERMINOS_VERSION}. Tu aceptación queda registrada en el pedido.</p>
+    </Sheet>
   )
 }
 

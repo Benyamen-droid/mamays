@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronRight, MapPin, Phone, ReceiptText, Star, Store, Truck, Users } from 'lucide-react'
+import { ChevronRight, DoorOpen, MapPin, Navigation, Phone, ReceiptText, Store, Truck, Users } from 'lucide-react'
 import { api, mensajeError } from '../../data'
 import { useAuth, useToast } from '../../context/AppContext'
 import { ACTIVE_STATUSES, ALERGENOS, PAYMENT_LABEL, STATUS_LABEL, ZONAS } from '../../lib/constants'
@@ -8,7 +8,9 @@ import type { Order } from '../../lib/types'
 import { celularValido, fechaHora, soles } from '../../lib/format'
 import { OrderItems, OrderTimeline, OrderTotals, StatusBadge } from '../../components/orders'
 import { CREDITS, photoPage } from '../../data/realPhotos'
-import { BackButton, Button, Card, CheckGrid, EmptyState, Eyebrow, Field, Loading, PageTitle, Screen, Sheet } from '../../components/ui'
+import { Avatar, BackButton, Button, Card, CheckGrid, DishPhoto, EmptyState, Eyebrow, Field, ImagePicker, Loading, PageTitle, Screen, Sheet } from '../../components/ui'
+import { StarsInput, StarsRow } from '../../components/reviews'
+import { openMapsDirections } from '../../lib/maps'
 
 /* ===================== MIS PEDIDOS ===================== */
 export function MyOrders() {
@@ -60,6 +62,7 @@ export function OrderDetail() {
   const [o, setO] = useState<Order | null | undefined>(undefined)
   const [stars, setStars] = useState(0)
   const [review, setReview] = useState('')
+  const [dishRates, setDishRates] = useState<Record<string, { rating: number; body: string }>>({})
   const [busy, setBusy] = useState(false)
   const [askCancel, setAskCancel] = useState(false)
   const load = useCallback(() => api.getOrder(id!).then(setO).catch(() => setO(null)), [id])
@@ -72,10 +75,19 @@ export function OrderDetail() {
     setAskCancel(false)
     try { await api.setOrderStatus(o!.id, 'cancelado'); toast('Pedido cancelado', 'info'); load() } catch (e) { toast(mensajeError(e), 'error') }
   }
+  const platos = [...new Map(o.items.filter((i) => i.dish_id).map((i) => [i.dish_id, i])).values()]
   async function rate() {
-    if (!stars) return toast('Elige de 1 a 5 estrellas', 'error')
+    if (!stars) return toast('Califica a la mamita (de 1 a 5 estrellas)', 'error')
+    const faltan = platos.filter((p) => !dishRates[p.dish_id]?.rating)
+    if (faltan.length) return toast(`Califica también: ${faltan.map((p) => p.dish_name).join(', ')}`, 'error')
     setBusy(true)
-    try { await api.rateOrder(o!.id, stars, review); toast('¡Gracias por tu valoración!'); load() } catch (e) { toast(mensajeError(e), 'error') } finally { setBusy(false) }
+    try {
+      await api.submitReviews(o!.id, {
+        mamita: { rating: stars, body: review },
+        dishes: platos.map((p) => ({ dish_id: p.dish_id, rating: dishRates[p.dish_id].rating, body: dishRates[p.dish_id].body ?? '' })),
+      })
+      toast('¡Gracias por tu calificación!'); load()
+    } catch (e) { toast(mensajeError(e), 'error') } finally { setBusy(false) }
   }
 
   return (
@@ -104,9 +116,18 @@ export function OrderDetail() {
           {o.mode === 'delivery' ? (
             <div className="flex gap-2"><Truck size={16} className="mt-0.5 shrink-0 text-guinda" /> Delivery a {o.delivery_address}</div>
           ) : (
-            <div className="flex gap-2"><Store size={16} className="mt-0.5 shrink-0 text-guinda" />
-              {o.pickup_address ? <>Recojo en <b>{o.pickup_address}</b></> : 'Recojo · la dirección aparece cuando la mamita acepte'}
+            <div className="flex gap-2">{o.mode === 'en_casa' ? <DoorOpen size={16} className="mt-0.5 shrink-0 text-guinda" /> : <Store size={16} className="mt-0.5 shrink-0 text-guinda" />}
+              <span>
+                {o.mode === 'en_casa' ? `Comer en el hogar · ${o.guests} ${o.guests === 1 ? 'persona' : 'personas'}` : 'Recojo'}
+                {o.pickup_address ? <> en <b>{o.pickup_address}</b></> : ' · la dirección aparece cuando la mamita acepte'}
+                {o.mode === 'en_casa' && o.terms_accepted_at && <span className="block text-xs text-ok">✓ Aceptaste los términos de seguridad y convivencia</span>}
+              </span>
             </div>
+          )}
+          {o.pickup_address && ACTIVE_STATUSES.includes(o.status) && (
+            <button onClick={() => openMapsDirections(o.pickup_address)} className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl bg-guinda py-2.5 text-sm font-bold text-white">
+              <Navigation size={16} /> Cómo llegar en Google Maps
+            </button>
           )}
           {o.receiver_name && o.receiver_name !== o.comensal_name && (
             <div className="flex gap-2"><Users size={16} className="mt-0.5 shrink-0 text-guinda" /> Lo recibe {o.receiver_name} · {o.receiver_phone}</div>
@@ -124,18 +145,32 @@ export function OrderDetail() {
       {o.status === 'entregado' && (
         <Card tone="crema" className="mt-4">
           {o.rating ? (
-            <div className="text-sm"><b>Tu valoración:</b> {'★'.repeat(o.rating)}{o.review && <p className="mt-1 text-gris">“{o.review}”</p>}</div>
+            <div className="text-sm"><b>Tu calificación a la mamita:</b> <StarsRow n={o.rating} />{o.review && <p className="mt-1 text-gris">“{o.review}”</p>}
+              <p className="mt-2 text-xs text-gris">Tus calificaciones de los platos aparecen en su sección de comentarios.</p></div>
           ) : (
             <>
               <div className="font-serif text-xl font-bold">¿Qué tal estuvo?</div>
-              <div className="mt-2 flex gap-1" role="radiogroup" aria-label="Valoración">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <button key={n} role="radio" aria-checked={stars === n} aria-label={`${n} estrellas`} onClick={() => setStars(n)}
-                    className={n <= stars ? 'text-[#E9A23B]' : 'text-[#dccfcf]'}><Star size={32} fill="currentColor" /></button>
-                ))}
+              <p className="text-xs text-gris">Tu opinión ayuda a otros comensales y a la mamita.</p>
+              <div className="mt-3 rounded-2xl bg-white p-3">
+                <div className="text-sm font-bold">La mamita · {o.mamita_name}</div>
+                <p className="text-[11px] text-gris">Atención, puntualidad, trato</p>
+                <div className="mt-1"><StarsInput value={stars} onChange={setStars} label="Calificación de la mamita" /></div>
+                <textarea className="field-input mt-2 min-h-16 text-sm" placeholder="Cuéntale a la mamita (opcional)" value={review} onChange={(e) => setReview(e.target.value)} maxLength={400} />
               </div>
-              <textarea className="field-input mt-3 min-h-20" placeholder="Cuéntale a la mamita (opcional)" value={review} onChange={(e) => setReview(e.target.value)} maxLength={400} />
-              <Button className="mt-3" onClick={rate} loading={busy}>Enviar valoración</Button>
+              {platos.map((p) => (
+                <div key={p.dish_id} className="mt-3 rounded-2xl bg-white p-3">
+                  <div className="flex items-center gap-2">
+                    <DishPhoto src={p.photo} alt={p.dish_name} className="h-9 w-9 rounded-lg object-cover" />
+                    <div className="text-sm font-bold">{p.dish_name}</div>
+                  </div>
+                  <p className="mt-1 text-[11px] text-gris">Sabor, porción, presentación</p>
+                  <div className="mt-1"><StarsInput value={dishRates[p.dish_id]?.rating ?? 0} label={`Calificación de ${p.dish_name}`}
+                    onChange={(n) => setDishRates((x) => ({ ...x, [p.dish_id]: { rating: n, body: x[p.dish_id]?.body ?? '' } }))} /></div>
+                  <textarea className="field-input mt-2 min-h-14 text-sm" placeholder="Comentario del plato (opcional, será público)" maxLength={500}
+                    value={dishRates[p.dish_id]?.body ?? ''} onChange={(e) => setDishRates((x) => ({ ...x, [p.dish_id]: { rating: x[p.dish_id]?.rating ?? 0, body: e.target.value } }))} />
+                </div>
+              ))}
+              <Button className="mt-3" onClick={rate} loading={busy}>Enviar calificación</Button>
             </>
           )}
         </Card>
@@ -173,8 +208,12 @@ export function ComensalProfile() {
 
   return (
     <Screen>
-      <PageTitle eyebrow="Mi perfil" title={profile!.full_name} text={profile!.email} />
+      <div className="mb-5 flex items-center gap-4">
+        <Avatar name={f.full_name} url={f.avatar_url} size={72} />
+        <div><div className="eyebrow">Mi perfil</div><h1 className="font-serif text-[26px] font-bold leading-tight">{profile!.full_name}</h1><p className="text-sm text-gris">{profile!.email}</p></div>
+      </div>
       <div className="space-y-4">
+        <Field label="Foto de perfil" optional><ImagePicker images={f.avatar_url ? [f.avatar_url] : []} onChange={(v) => set('avatar_url', v[0] ?? '')} max={1} kind="avatar" label="Subir foto" /></Field>
         <Field label="Nombres y apellidos"><input className="field-input" value={f.full_name} onChange={(e) => set('full_name', e.target.value)} /></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Celular"><input className="field-input" inputMode="tel" value={f.phone} onChange={(e) => set('phone', e.target.value)} /></Field>
