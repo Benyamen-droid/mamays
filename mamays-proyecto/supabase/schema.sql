@@ -157,7 +157,7 @@ create table if not exists public.orders (
                     ('reservado','enviado','aceptado','preparando','listo','en_camino',
                      'entregado','rechazado','cancelado','expirado')),
   mode             text not null check (mode in ('delivery','recojo')),
-  payment_method   text not null check (payment_method in ('yape','efectivo')),
+  payment_method   text not null,
   subtotal         numeric(8,2) not null,
   delivery_cost    numeric(6,2) not null default 0,
   total            numeric(8,2) not null,
@@ -176,6 +176,19 @@ create table if not exists public.orders (
 
 -- Dirección de recojo: se copia al pedido solo cuando la mamita lo acepta
 alter table public.orders add column if not exists pickup_address text not null default '';
+
+-- Pagos en línea (Mercado Pago): Yape con código de aprobación y tarjeta con 3-D Secure
+--   yape        → Yape en línea (celular + código de aprobación)
+--   tarjeta     → tarjeta de crédito/débito con verificación 3-D Secure
+--   yape_manual → Yape directo a la mamita + captura de constancia
+--   efectivo    → se paga al recibir
+alter table public.orders add column if not exists payment_id     text not null default '';
+alter table public.orders add column if not exists payment_detail text not null default '';
+alter table public.orders add column if not exists paid_at        timestamptz;
+alter table public.orders drop constraint if exists orders_payment_method_check;
+update public.orders set payment_method = 'yape_manual' where payment_method = 'yape' and voucher_url <> '' and payment_id = '';
+alter table public.orders add constraint orders_payment_method_check
+  check (payment_method in ('yape','tarjeta','yape_manual','efectivo'));
 
 create index if not exists orders_comensal_idx on public.orders(comensal_id, created_at desc);
 create index if not exists orders_mamita_idx   on public.orders(mamita_id, created_at desc);
@@ -337,7 +350,7 @@ begin
   if not found then raise exception 'MAMITA_NO_EXISTE'; end if;
 
   if v_mode not in ('delivery','recojo') then raise exception 'MODALIDAD_INVALIDA'; end if;
-  if v_pay  not in ('yape','efectivo')   then raise exception 'PAGO_INVALIDO'; end if;
+  if v_pay  not in ('yape','tarjeta','yape_manual','efectivo') then raise exception 'PAGO_INVALIDO'; end if;
   if v_mode = 'delivery' and length(trim(coalesce(p->>'delivery_address',''))) < 5 then
     raise exception 'FALTA_DIRECCION';
   end if;
@@ -351,7 +364,8 @@ begin
     exit when not exists (select 1 from public.orders where code = v_code);
   end loop;
 
-  v_status := case when v_pay = 'yape' then 'reservado' else 'enviado' end;
+  -- Todo pago previo (Yape, tarjeta o constancia) reserva la porción 15 minutos; el efectivo va directo
+  v_status := case when v_pay = 'efectivo' then 'enviado' else 'reservado' end;
 
   insert into public.orders (code, comensal_id, comensal_name, mamita_id, mamita_name, status, mode,
                              payment_method, subtotal, delivery_cost, total, delivery_address,
@@ -363,7 +377,7 @@ begin
           coalesce(nullif(trim(p->>'receiver_phone'),''), v_me.phone),
           coalesce(nullif(trim(p->>'payer_name'),''), v_me.full_name),
           left(coalesce(p->>'notes',''), 300),
-          case when v_pay = 'yape' then v_now + interval '15 minutes' end,
+          case when v_pay <> 'efectivo' then v_now + interval '15 minutes' end,
           jsonb_build_array(jsonb_build_object('status', v_status, 'at', v_now)))
   returning id into v_order;
 
@@ -408,7 +422,7 @@ declare v public.orders%rowtype;
 begin
   select * into v from public.orders where id = p_order for update;
   if not found or v.comensal_id <> auth.uid() then raise exception 'PEDIDO_NO_EXISTE'; end if;
-  if v.status <> 'reservado' then raise exception 'ESTADO_INVALIDO'; end if;
+  if v.status <> 'reservado' or v.payment_method <> 'yape_manual' then raise exception 'ESTADO_INVALIDO'; end if;
   if v.reserved_until < now() then
     update public.orders set status = 'expirado',
       history = history || jsonb_build_array(jsonb_build_object('status','expirado','at',now()))
@@ -474,6 +488,44 @@ begin
     perform public.notify(v.comensal_id, v.code || ' · ' || initcap(replace(p_status,'_',' ')), v_msg, p_order);
   end if;
 end $$;
+
+-- ===== Pagos en línea: SOLO las llama la Edge Function "pagar" con la service_role key =====
+-- Guarda el intento de pago y alarga la reserva mientras el comensal completa la verificación
+create or replace function public.register_payment_attempt(p_order uuid, p_payment_id text, p_detail text)
+returns void language sql security definer set search_path = public as $$
+  update public.orders
+     set payment_id = coalesce(p_payment_id, ''), payment_detail = coalesce(p_detail, ''),
+         reserved_until = greatest(coalesce(reserved_until, now()), now() + interval '10 minutes')
+   where id = p_order and status = 'reservado';
+$$;
+
+-- Pago aprobado por Mercado Pago → el pedido llega a la mamita (idempotente)
+create or replace function public.confirm_online_payment(p_order uuid, p_payment_id text, p_detail text)
+returns void language plpgsql security definer set search_path = public as $$
+declare v public.orders%rowtype;
+begin
+  select * into v from public.orders where id = p_order for update;
+  if not found then raise exception 'PEDIDO_NO_EXISTE'; end if;
+  if v.paid_at is not null then return; end if;                       -- ya confirmado
+  if v.payment_method not in ('yape','tarjeta') then raise exception 'ESTADO_INVALIDO'; end if;
+  -- si el cobro se aprobó justo al vencer la reserva, igual se respeta: el dinero ya se cobró
+  if v.status not in ('reservado','expirado') then raise exception 'ESTADO_INVALIDO'; end if;
+
+  update public.orders
+     set status = 'enviado', paid_at = now(), reserved_until = null,
+         payment_id = p_payment_id, payment_detail = coalesce(p_detail, 'accredited'),
+         history = history || jsonb_build_array(jsonb_build_object('status','enviado','at',now()))
+   where id = p_order;
+
+  perform public.notify(v.mamita_id, '¡Nuevo pedido pagado!',
+    v.comensal_name || ' pagó S/ ' || to_char(v.total,'FM9990.00') || ' con ' ||
+    case when v.payment_method = 'yape' then 'Yape' else 'tarjeta' end || ' (' || v.code || ').', p_order);
+end $$;
+
+revoke all on function public.register_payment_attempt(uuid,text,text) from public, anon, authenticated;
+revoke all on function public.confirm_online_payment(uuid,text,text)   from public, anon, authenticated;
+grant execute on function public.register_payment_attempt(uuid,text,text) to service_role;
+grant execute on function public.confirm_online_payment(uuid,text,text)   to service_role;
 
 create or replace function public.rate_order(p_order uuid, p_rating int, p_review text default '')
 returns void language plpgsql security definer set search_path = public as $$

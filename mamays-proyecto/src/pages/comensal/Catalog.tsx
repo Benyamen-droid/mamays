@@ -8,7 +8,7 @@ import type { DishView, MamitaPublic, Order } from '../../lib/types'
 import { estadoHorario, horarioTexto, primerNombre, soles } from '../../lib/format'
 import { DishCard, dishTags } from '../../components/DishCard'
 import { MapView } from '../../components/MapView'
-import { Avatar, Button, Card, EmptyState, Eyebrow, Loading, Screen, Sheet, Stars, StockBar, Stepper, Tag } from '../../components/ui'
+import { Avatar, Button, Card, DishPhoto, EmptyState, Eyebrow, Loading, Screen, Sheet, Stars, StockBar, Stepper, Tag } from '../../components/ui'
 
 function useFavorites() {
   const [favs, setFavs] = useState<string[]>([])
@@ -34,7 +34,7 @@ export function ComensalHome() {
   const [zona, setZona] = useState('')
   const [mamita, setMamita] = useState('')
   const [minRating, setMinRating] = useState(0)
-  const [hideMine, setHideMine] = useState(true)
+  const [hideMine, setHideMine] = useState(false)
   const [onlyFavs, setOnlyFavs] = useState(false)
   const [showMap, setShowMap] = useState(false)
   const { favs, toggle } = useFavorites()
@@ -103,7 +103,7 @@ export function ComensalHome() {
         {alergias.length > 0 && (
           <button onClick={() => setHideMine(!hideMine)} aria-pressed={hideMine}
             className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold ${hideMine ? 'border-[#b42323] bg-[#fde8e8] text-[#a32020]' : 'border-borde bg-white text-gris'}`}>
-            <ShieldAlert size={14} /> {hideMine ? `Ocultando ${ocultosPorAlergia} con tus alérgenos` : 'Mostrar todo (incluye tus alérgenos)'}
+            <ShieldAlert size={14} /> {hideMine ? `Ocultando ${ocultosPorAlergia} con tus alérgenos` : `Ocultar ${ocultosPorAlergia} con tus alérgenos`}
           </button>
         )}
         <button onClick={() => setOnlyFavs(!onlyFavs)} aria-pressed={onlyFavs}
@@ -138,7 +138,7 @@ export function ComensalHome() {
         <Link to={`/comensal/pedidos/${active.id}`}
           className="rise fixed inset-x-0 bottom-[78px] z-20 mx-auto flex w-[calc(100%-32px)] max-w-[448px] items-center gap-3 rounded-2xl bg-guinda px-4 py-3 text-white shadow-[0_12px_30px_-10px_rgb(163_23_59/0.8)]">
           <span className="relative flex h-3 w-3"><span className="absolute h-full w-full animate-ping rounded-full bg-white/70" /><span className="relative h-3 w-3 rounded-full bg-white" /></span>
-          <span className="flex-1 text-sm"><b>Ver mi pedido</b> · {active.status === 'reservado' ? 'Falta adjuntar tu constancia' : STATUS_LABEL[active.status]}</span>
+          <span className="flex-1 text-sm"><b>Ver mi pedido</b> · {active.status === 'reservado' ? 'Falta completar el pago' : STATUS_LABEL[active.status]}</span>
           <ChevronRight size={18} />
         </Link>
       )}
@@ -170,20 +170,29 @@ export function DishDetail() {
   const [qty, setQty] = useState(1)
   const [photo, setPhoto] = useState(0)
   const [conflict, setConflict] = useState(false)
+  const [allergyOpen, setAllergyOpen] = useState(false)
+  const [confirmRisk, setConfirmRisk] = useState(false)
+  const [riskChecked, setRiskChecked] = useState(false)
+  const misAlergias = profile?.allergies ?? []
+  // Al abrir un plato con alérgenos del usuario, aparece la advertencia de inmediato
+  useEffect(() => {
+    if (d && d.allergens.some((a) => misAlergias.includes(a))) setAllergyOpen(true)
+  }, [d]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { api.getDish(id!).then(setD).catch(() => setD(null)) }, [id])
   if (d === undefined) return <Screen><Loading /></Screen>
   if (d === null) return <Screen><EmptyState icon={<X />} title="Este plato ya no está" text="Puede que la mamita lo haya retirado." action={<Button onClick={() => nav('/comensal')}>Volver al menú</Button>} /></Screen>
 
-  const alergias = profile?.allergies ?? []
+  const alergias = misAlergias
   const choque = d.allergens.filter((a) => alergias.includes(a))
   const agotado = d.available === 0
   const h = estadoHorario(d.available_from, d.available_to)
   const maxQty = Math.max(1, Math.min(d.available, 20))
   const entrega = d.delivery_mode === 'ambos' ? 'Delivery y recojo' : d.delivery_mode === 'delivery' ? 'Solo delivery' : 'Solo recojo'
 
-  function add() {
+  function add(force = false) {
     if (!d) return
+    if (choque.length > 0 && !force) { setRiskChecked(false); setConfirmRisk(true); return }
     const r = cart.add(d.id, d.mamita_id, qty)
     if (r === 'otra-mamita') return setConflict(true)
     toast(`${qty} × ${d.name} en tu carrito`)
@@ -193,7 +202,7 @@ export function DishDetail() {
   return (
     <Screen nav={false} className="!px-0 !pt-0">
       <div className="relative aspect-[4/3] bg-[#2b2023]">
-        {d.photos[photo] && <img src={d.photos[photo]} alt={d.name} className="h-full w-full object-cover" onClick={() => setPhoto((photo + 1) % d.photos.length)} />}
+        <DishPhoto src={d.photos[photo]} alt={d.name} className="h-full w-full object-cover" onClick={() => d.photos.length > 1 && setPhoto((photo + 1) % d.photos.length)} />
         <button onClick={() => nav(-1)} aria-label="Volver" className="absolute left-4 top-4 grid h-11 w-11 place-items-center rounded-full bg-white/95 shadow"><ChevronLeft /></button>
         <button onClick={() => toggle(d.id)} aria-label="Favorito" aria-pressed={favs.includes(d.id)} className="absolute right-4 top-4 grid h-11 w-11 place-items-center rounded-full bg-white/95 text-guinda shadow">
           <Heart fill={favs.includes(d.id) ? 'currentColor' : 'none'} />
@@ -268,10 +277,50 @@ export function DishDetail() {
 
       <div className="fixed inset-x-0 bottom-0 z-30 mx-auto flex max-w-[480px] items-center gap-3 border-t border-borde bg-white px-5 py-3 safe-bottom">
         <Stepper value={qty} onChange={setQty} max={maxQty} />
-        <Button onClick={add} disabled={agotado} className="flex-1">
+        <Button onClick={() => add()} disabled={agotado} className="flex-1">
           <span className="whitespace-nowrap">{agotado ? 'AGOTADO' : qty > 1 ? `Agregar · ${soles(d.price * qty)}` : '¡Agregar a mi carrito!'}</span>
         </Button>
       </div>
+
+      {allergyOpen && choque.length > 0 && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-6" role="alertdialog" aria-modal="true" aria-labelledby="alerta-alergia">
+          <div className="rise w-full max-w-[380px] overflow-hidden rounded-[28px] bg-white shadow-2xl">
+            <div className="bg-[#b42323] px-6 pb-5 pt-6 text-center text-white">
+              <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-white/15"><ShieldAlert size={34} /></div>
+              <h2 id="alerta-alergia" className="mt-3 font-serif text-2xl font-bold">¡Alerta de alergia!</h2>
+              <p className="mt-1 text-sm text-white/90">Este plato contiene algo que registraste como alergia</p>
+            </div>
+            <div className="p-6">
+              <div className="flex flex-wrap justify-center gap-2">
+                {choque.map((a) => <span key={a} className="rounded-full bg-[#fde8e8] px-3 py-1.5 text-sm font-extrabold text-[#a32020]">⚠ {a}</span>)}
+              </div>
+              <p className="mt-4 text-center text-sm text-gris">
+                <b className="text-tinta">{d.name}</b> de {d.mamita_name} declara <b className="text-tinta">{d.allergens.join(', ')}</b>.
+                Además, en una cocina casera puede haber contacto cruzado.
+              </p>
+              <div className="mt-5 space-y-2">
+                <Button onClick={() => nav('/comensal')}>Volver al menú</Button>
+                <Button variant="secondary" onClick={() => setAllergyOpen(false)}>Ver el plato de todos modos</Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Sheet open={confirmRisk} onClose={() => setConfirmRisk(false)} title="Confirma antes de agregar">
+        <div className="flex gap-3 rounded-2xl bg-[#fde8e8] p-3.5 text-sm text-[#8f1f1f]">
+          <ShieldAlert className="shrink-0" />
+          <div>Vas a pedir un plato con <b>{choque.join(', ')}</b>, que marcaste en tus alergias.</div>
+        </div>
+        <label className="mt-4 flex items-start gap-3 text-sm">
+          <input type="checkbox" className="mt-1 h-5 w-5 accent-[#A3173B]" checked={riskChecked} onChange={(e) => setRiskChecked(e.target.checked)} />
+          Entiendo el riesgo y confirmo que este pedido es seguro para quien lo va a comer (por ejemplo, es para otra persona).
+        </label>
+        <div className="mt-5 space-y-2">
+          <Button disabled={!riskChecked} onClick={() => { setConfirmRisk(false); add(true) }}>Agregar de todos modos</Button>
+          <Button variant="secondary" onClick={() => setConfirmRisk(false)}>Mejor no</Button>
+        </div>
+      </Sheet>
 
       <Sheet open={conflict} onClose={() => setConflict(false)} title="Tu carrito es de otra mamita">
         <p className="text-sm text-gris">Cada pedido se prepara en una sola cocina. ¿Quieres vaciar tu carrito y empezar uno nuevo con {d.name}?</p>

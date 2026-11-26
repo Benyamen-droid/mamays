@@ -4,6 +4,7 @@ import type { Order, OrderStatus } from '../lib/types'
 import { STATUS_BADGE, STATUS_LABEL, timelineSteps } from '../lib/constants'
 import { hora, soles } from '../lib/format'
 import { api } from '../data'
+import { DishPhoto } from './ui'
 
 const BADGE_TONE: Partial<Record<OrderStatus, string>> = {
   reservado: 'bg-[#fff4ea] text-[#9a4b0f]',
@@ -73,7 +74,7 @@ export function OrderItems({ o }: { o: Order }) {
     <ul className="space-y-2">
       {o.items.map((it) => (
         <li key={it.dish_id + it.dish_name} className="flex items-center gap-3">
-          {it.photo ? <img src={it.photo} alt="" className="h-11 w-11 rounded-xl object-cover" /> : <div className="h-11 w-11 rounded-xl bg-crema" />}
+          <DishPhoto src={it.photo} alt={it.dish_name} className="h-11 w-11 rounded-xl object-cover" />
           <div className="flex-1 text-sm"><span className="font-bold">{it.qty} ×</span> {it.dish_name}</div>
           <div className="text-sm font-semibold">{soles(it.unit_price * it.qty)}</div>
         </li>

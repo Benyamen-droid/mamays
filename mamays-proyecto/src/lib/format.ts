@@ -100,3 +100,36 @@ export function blobToDataUrl(b: Blob): Promise<string> {
 
 export const emailValido = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e.trim())
 export const celularValido = (c: string) => /^9\d{8}$/.test(c.replace(/\D/g, ''))
+
+/** Validación Luhn del número de tarjeta */
+export function luhn(num: string) {
+  const d = num.replace(/\D/g, '')
+  if (d.length < 13 || d.length > 19) return false
+  let sum = 0
+  for (let i = 0; i < d.length; i++) {
+    let n = Number(d[d.length - 1 - i])
+    if (i % 2 === 1) { n *= 2; if (n > 9) n -= 9 }
+    sum += n
+  }
+  return sum % 10 === 0
+}
+
+export function cardBrand(num: string): 'visa' | 'mastercard' | 'amex' | 'diners' | '' {
+  const d = num.replace(/\D/g, '')
+  if (/^4/.test(d)) return 'visa'
+  if (/^(5[1-5]|2[2-7])/.test(d)) return 'mastercard'
+  if (/^3[47]/.test(d)) return 'amex'
+  if (/^3(0[0-5]|[68])/.test(d)) return 'diners'
+  return ''
+}
+
+/** "MM/AA" vigente */
+export function expValida(exp: string, now = new Date()) {
+  const m = /^(\d{2})\/(\d{2})$/.exec(exp.trim())
+  if (!m) return false
+  const mes = Number(m[1]), anio = 2000 + Number(m[2])
+  if (mes < 1 || mes > 12) return false
+  return new Date(anio, mes, 0, 23, 59) >= now
+}
+
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))

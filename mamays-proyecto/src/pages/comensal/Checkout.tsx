@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Banknote, Check, CircleCheck, Copy, ShoppingBag, Store, Trash2, Truck, TriangleAlert, Users, Wallet } from 'lucide-react'
+import { Banknote, Check, CircleCheck, Copy, CreditCard, ShoppingBag, Store, Trash2, Truck, TriangleAlert, Users, Wallet } from 'lucide-react'
 import { api, mensajeError } from '../../data'
 import { useAuth, useCart, useToast } from '../../context/AppContext'
-import type { DishView, MamitaPublic, Order, OrderMode, PaymentMethod } from '../../lib/types'
+import type { DishView, MamitaPublic, Order, OrderMode, PaymentMethod, PayResult } from '../../lib/types'
 import { celularValido, soles } from '../../lib/format'
 import { OrderItems, OrderTotals, ReservaCountdown } from '../../components/orders'
-import { BackButton, Button, Card, EmptyState, Eyebrow, Field, ImagePicker, Loading, PageTitle, Screen, Segmented, Stepper } from '../../components/ui'
+import { BackButton, Button, Card, DishPhoto, EmptyState, Eyebrow, Field, ImagePicker, Loading, PageTitle, Screen, Segmented, Stepper } from '../../components/ui'
+import { CardPayForm, ThreeDSModal, YapeMark, YapePayForm } from '../../components/payments'
+import { PAYMENT_LABEL } from '../../lib/constants'
 
 /* ===================== CARRITO ===================== */
 export function CartPage() {
@@ -17,7 +19,8 @@ export function CartPage() {
   const [dishes, setDishes] = useState<Record<string, DishView | null>>({})
   const [mamita, setMamita] = useState<MamitaPublic | null>(null)
   const [mode, setMode] = useState<OrderMode>('delivery')
-  const [pay, setPay] = useState<PaymentMethod>('yape')
+  const online = api.onlinePayments !== 'none'
+  const [pay, setPay] = useState<PaymentMethod>(online ? 'yape' : 'yape_manual')
   const [address, setAddress] = useState(profile?.address ?? '')
   const [forOther, setForOther] = useState(false)
   const [receiver, setReceiver] = useState({ name: '', phone: '' })
@@ -70,7 +73,7 @@ export function CartPage() {
         delivery_address: address, receiver_name: forOther ? receiver.name : '', receiver_phone: forOther ? receiver.phone.replace(/\D/g, '') : '',
         payer_name: profile?.full_name ?? '', notes,
       })
-      if (pay === 'yape') nav(`/comensal/pago/${id}`)
+      if (pay !== 'efectivo') nav(`/comensal/pago/${id}`)
       else { cart.clear(); nav(`/comensal/confirmado/${id}`, { replace: true }) }
     } catch (e) { toast(mensajeError(e), 'error') } finally { setBusy(false) }
   }
@@ -90,7 +93,7 @@ export function CartPage() {
       <div className="space-y-3">
         {rows.map(({ line, d }) => (
           <Card key={line.dish_id} className="flex items-center gap-3 !p-3">
-            {d?.photos[0] ? <img src={d.photos[0]} alt="" className="h-16 w-16 rounded-2xl object-cover" /> : <div className="h-16 w-16 rounded-2xl bg-crema" />}
+            <DishPhoto src={d?.photos[0]} alt={d?.name ?? 'Plato'} className="h-16 w-16 rounded-2xl object-cover" />
             <div className="flex-1">
               <div className="font-bold leading-tight">{d?.name ?? 'Plato no disponible'}</div>
               <div className="text-sm font-semibold text-guinda">{d ? soles(d.price * line.qty) : '—'}</div>
@@ -129,10 +132,31 @@ export function CartPage() {
       <div className="mt-3"><Field label="Nota para la mamita" optional><input className="field-input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Ej. sin cebolla, paso a la 1 p. m." maxLength={300} /></Field></div>
 
       <h2 className="mb-2 mt-6 text-sm font-extrabold">¿Cómo pagas?</h2>
-      <Segmented value={pay} onChange={setPay} options={[
-        { value: 'yape', label: 'Yape', icon: <Wallet size={20} /> },
-        { value: 'efectivo', label: 'Efectivo', icon: <Banknote size={20} /> },
-      ]} />
+      <div className="space-y-2" role="radiogroup" aria-label="Medio de pago">
+        {(online
+          ? [
+              { v: 'yape' as const, title: <YapeMark size="sm" />, text: 'Con tu celular y código de aprobación', icon: <Wallet size={20} /> },
+              { v: 'tarjeta' as const, title: 'Tarjeta de crédito o débito', text: 'Visa, Mastercard · con verificación de tu banco', icon: <CreditCard size={20} /> },
+              { v: 'efectivo' as const, title: 'Efectivo', text: 'Pagas al recibir tu pedido', icon: <Banknote size={20} /> },
+            ]
+          : [
+              { v: 'yape_manual' as const, title: 'Yape a la mamita', text: 'Yapeas a su número y adjuntas la constancia', icon: <Wallet size={20} /> },
+              { v: 'efectivo' as const, title: 'Efectivo', text: 'Pagas al recibir tu pedido', icon: <Banknote size={20} /> },
+            ]
+        ).map((o) => (
+          <button key={o.v} type="button" role="radio" aria-checked={pay === o.v} aria-label={PAYMENT_LABEL[o.v]} onClick={() => setPay(o.v)}
+            className={`flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition ${pay === o.v ? 'border-guinda bg-guinda-50' : 'border-borde bg-white'}`}>
+            <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 ${pay === o.v ? 'border-guinda' : 'border-[#cbb]'}`}>
+              {pay === o.v && <span className="h-2.5 w-2.5 rounded-full bg-guinda" />}
+            </span>
+            <span className="flex-1">
+              <span className="block text-sm font-bold">{o.title}</span>
+              <span className="block text-xs text-gris">{o.text}</span>
+            </span>
+            <span className="text-gris">{o.icon}</span>
+          </button>
+        ))}
+      </div>
 
       <Card className="mt-5">
         <div className="flex justify-between text-sm"><span className="text-gris">Platos</span><span>{soles(subtotal)}</span></div>
@@ -142,15 +166,15 @@ export function CartPage() {
 
       <div className="mt-5">
         <Button onClick={submit} loading={busy} disabled={problems.length > 0}>
-          {pay === 'yape' ? 'Continuar para adjuntar constancia' : 'Enviar pedido a la mamita'}
+          {pay === 'efectivo' ? 'Enviar pedido a la mamita' : pay === 'yape_manual' ? 'Continuar para adjuntar constancia' : `Continuar al pago · ${soles(subtotal + deliveryCost)}`}
         </Button>
-        {pay === 'yape' && <p className="mt-2 text-center text-xs text-gris">Reservamos tu porción por 15 minutos mientras yapeas.</p>}
+        {pay !== 'efectivo' && <p className="mt-2 text-center text-xs text-gris">Reservamos tu porción por 15 minutos mientras pagas.</p>}
       </div>
     </Screen>
   )
 }
 
-/* ===================== PAGO CON YAPE + CONSTANCIA ===================== */
+/* ===================== PAGO (Yape en línea · Tarjeta 3-D Secure · Yape con constancia) ===================== */
 export function PayPage() {
   const { id } = useParams()
   const nav = useNavigate()
@@ -158,9 +182,8 @@ export function PayPage() {
   const { toast } = useToast()
   const [o, setO] = useState<Order | null | undefined>(undefined)
   const [m, setM] = useState<MamitaPublic | null>(null)
-  const [voucher, setVoucher] = useState<string[]>([])
-  const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [challenge, setChallenge] = useState<Extract<PayResult, { status: 'challenge' }> | null>(null)
+  const [rejected, setRejected] = useState('')
 
   const load = useCallback(async () => {
     const order = await api.getOrder(id!).catch(() => null)
@@ -168,6 +191,24 @@ export function PayPage() {
     if (order) setM(await api.getMamita(order.mamita_id).catch(() => null))
   }, [id])
   useEffect(() => { load() }, [load])
+
+  const onResult = useCallback((r: PayResult) => {
+    setChallenge(null)
+    if (r.status === 'approved') {
+      cart.clear()
+      nav(`/comensal/confirmado/${id}`, { replace: true })
+    } else if (r.status === 'challenge') {
+      setRejected('')
+      setChallenge(r)
+    } else if (r.status === 'pending') {
+      cart.clear()
+      toast(r.message, 'info')
+      nav(`/comensal/pedidos/${id}`, { replace: true })
+    } else {
+      setRejected(r.message)
+      load()
+    }
+  }, [cart, id, load, nav, toast])
 
   if (o === undefined) return <Screen nav={false}><Loading /></Screen>
   if (!o) return <Screen nav={false}><EmptyState icon={<TriangleAlert />} title="Pedido no encontrado" text="" /></Screen>
@@ -182,54 +223,69 @@ export function PayPage() {
     )
   }
 
+  async function cancel() {
+    try { await api.setOrderStatus(o!.id, 'cancelado'); toast('Reserva cancelada', 'info'); nav('/comensal/carrito') } catch (e) { toast(mensajeError(e), 'error') }
+  }
+
+  const title = o.payment_method === 'tarjeta' ? 'Paga con tarjeta' : o.payment_method === 'yape' ? 'Paga con Yape' : <>Yapea {soles(o.total)}</>
+  return (
+    <Screen nav={false}>
+      <BackButton to="/comensal/carrito" label="Carrito" />
+      <PageTitle eyebrow="Método de pago" title={title} text={`Pedido ${o.code} · Total ${soles(o.total)}`} />
+      <ReservaCountdown until={o.reserved_until!} onExpire={load} />
+      {rejected && (
+        <div className="mt-4 flex gap-3 rounded-2xl border border-[#f0b4b4] bg-[#fde8e8] p-3.5 text-sm text-[#8f1f1f]" role="alert">
+          <TriangleAlert className="shrink-0" size={20} /><div><b>Pago rechazado.</b> {rejected}</div>
+        </div>
+      )}
+      <div className="mt-4">
+        {o.payment_method === 'yape' && <YapePayForm order={o} onResult={onResult} />}
+        {o.payment_method === 'tarjeta' && <CardPayForm order={o} onResult={onResult} />}
+        {o.payment_method === 'yape_manual' && <ManualYape order={o} mamita={m} onSent={() => { cart.clear(); nav(`/comensal/confirmado/${o.id}`, { replace: true }) }} onError={load} />}
+      </div>
+      <div className="mt-4"><OrderTotals o={o} /></div>
+      <Button variant="ghost" className="mt-3" onClick={cancel}>Cancelar reserva</Button>
+      {challenge && <ThreeDSModal order={o} challenge={challenge} onResult={onResult} onCancel={() => { setChallenge(null); setRejected('Cancelaste la verificación de tu banco.') }} />}
+    </Screen>
+  )
+}
+
+/** Yape directo al número de la mamita + captura de la constancia (cuando no hay pasarela configurada) */
+function ManualYape({ order, mamita, onSent, onError }: { order: Order; mamita: MamitaPublic | null; onSent: () => void; onError: () => void }) {
+  const { toast } = useToast()
+  const [voucher, setVoucher] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
   async function copy() {
-    try { await navigator.clipboard.writeText((m?.yape_phone ?? '').replace(/\s/g, '')); setCopied(true); setTimeout(() => setCopied(false), 2000) }
+    try { await navigator.clipboard.writeText((mamita?.yape_phone ?? '').replace(/\s/g, '')); setCopied(true); setTimeout(() => setCopied(false), 2000) }
     catch { toast('No se pudo copiar. Anótalo manualmente.', 'info') }
   }
   async function send() {
     if (!voucher[0]) return toast('Adjunta la captura de tu Yape', 'error')
     setBusy(true)
-    try {
-      await api.submitVoucher(o!.id, voucher[0])
-      cart.clear()
-      nav(`/comensal/confirmado/${o!.id}`, { replace: true })
-    } catch (e) { toast(mensajeError(e), 'error'); load() } finally { setBusy(false) }
+    try { await api.submitVoucher(order.id, voucher[0]); onSent() } catch (e) { toast(mensajeError(e), 'error'); onError() } finally { setBusy(false) }
   }
-  async function cancel() {
-    try { await api.setOrderStatus(o!.id, 'cancelado'); toast('Reserva cancelada', 'info'); nav('/comensal/carrito') } catch (e) { toast(mensajeError(e), 'error') }
-  }
-
   return (
-    <Screen nav={false}>
-      <PageTitle eyebrow="Pago con Yape" title={<>Yapea {soles(o.total)}</>} text={`Pedido ${o.code}`} />
-      <ReservaCountdown until={o.reserved_until!} onExpire={load} />
-
-      <Card className="mt-4">
+    <>
+      <Card>
         <div className="text-xs text-gris">Yapea a</div>
-        <div className="mt-0.5 text-lg font-bold">{m?.yape_name || m?.full_name}</div>
+        <div className="mt-0.5 text-lg font-bold">{mamita?.yape_name || mamita?.full_name}</div>
         <div className="mt-2 flex items-center justify-between rounded-2xl bg-crema px-4 py-3">
-          <span className="font-mono text-xl font-bold tracking-wider">{m?.yape_phone || '—'}</span>
+          <span className="font-mono text-xl font-bold tracking-wider">{mamita?.yape_phone || '—'}</span>
           <button onClick={copy} className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-bold text-guinda shadow-sm">
             {copied ? <><Check size={14} /> Copiado</> : <><Copy size={14} /> Copiar</>}
           </button>
         </div>
         <ol className="mt-4 space-y-2 text-sm text-cafe">
-          {['Abre tu app de Yape.', `Yapea exactamente ${soles(o.total)} a este número.`, 'Toma una captura de la constancia.', 'Adjúntala aquí y envía tu pedido.'].map((t, i) => (
+          {['Abre tu app de Yape.', `Yapea exactamente ${soles(order.total)} a este número.`, 'Toma una captura de la constancia.', 'Adjúntala aquí y envía tu pedido.'].map((t, i) => (
             <li key={i} className="flex gap-3"><span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-guinda-50 text-xs font-bold text-guinda">{i + 1}</span>{t}</li>
           ))}
         </ol>
       </Card>
-
-      <div className="mt-4"><OrderTotals o={o} /></div>
-
       <h2 className="mb-2 mt-6 text-sm font-extrabold">Constancia de pago</h2>
       <ImagePicker images={voucher} onChange={setVoucher} max={1} kind="voucher" label="Adjuntar captura" />
-
-      <div className="mt-6 space-y-2">
-        <Button onClick={send} loading={busy} disabled={!voucher[0]}>Enviar constancia y pedido</Button>
-        <Button variant="ghost" onClick={cancel}>Cancelar reserva</Button>
-      </div>
-    </Screen>
+      <Button className="mt-5" onClick={send} loading={busy} disabled={!voucher[0]}>Enviar constancia y pedido</Button>
+    </>
   )
 }
 
@@ -245,8 +301,11 @@ export function ConfirmedPage() {
         <Eyebrow className="mt-6 !text-white/85">Pedido enviado</Eyebrow>
         <h1 className="mt-2 font-serif text-[34px] font-bold leading-tight">¡Listo! Tu pedido fue enviado a la mamita</h1>
         {o && <div className="mt-4 rounded-full bg-white/15 px-5 py-2 font-mono text-lg font-bold tracking-wider">{o.code}</div>}
+        {o?.payment_id && <div className="mt-2 text-xs text-white/80">N.° de operación: {o.payment_id}</div>}
         <p className="mt-4 max-w-[300px] text-white/90">
-          {o?.payment_method === 'yape' ? 'Ella revisará tu constancia y te avisaremos cuando lo acepte.' : 'Ten listo el pago en efectivo al recibir tu pedido.'}
+          {o?.paid_at ? `Pago aprobado con ${o.payment_method === 'yape' ? 'Yape' : 'tarjeta'} ✓ La mamita ya recibió tu pedido.`
+            : o?.payment_method === 'yape_manual' ? 'Ella revisará tu constancia y te avisaremos cuando lo acepte.'
+            : 'Ten listo el pago en efectivo al recibir tu pedido.'}
         </p>
         {o && <div className="mt-6 w-full rounded-3xl bg-white p-4 text-left text-tinta"><OrderItems o={o} /><div className="mt-3"><OrderTotals o={o} /></div></div>}
         <div className="mt-6 w-full space-y-2">

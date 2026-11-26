@@ -3,10 +3,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronRight, MapPin, Phone, ReceiptText, Star, Store, Truck, Users } from 'lucide-react'
 import { api, mensajeError } from '../../data'
 import { useAuth, useToast } from '../../context/AppContext'
-import { ACTIVE_STATUSES, ALERGENOS, STATUS_LABEL, ZONAS } from '../../lib/constants'
+import { ACTIVE_STATUSES, ALERGENOS, PAYMENT_LABEL, STATUS_LABEL, ZONAS } from '../../lib/constants'
 import type { Order } from '../../lib/types'
 import { celularValido, fechaHora, soles } from '../../lib/format'
 import { OrderItems, OrderTimeline, OrderTotals, StatusBadge } from '../../components/orders'
+import { CREDITS, photoPage } from '../../data/realPhotos'
 import { BackButton, Button, Card, CheckGrid, EmptyState, Eyebrow, Field, Loading, PageTitle, Screen, Sheet } from '../../components/ui'
 
 /* ===================== MIS PEDIDOS ===================== */
@@ -89,8 +90,8 @@ export function OrderDetail() {
 
       {o.status === 'reservado' && (
         <div className="mt-4 rounded-2xl bg-[#fff4ea] p-4 text-sm text-[#9a4b0f]">
-          Falta adjuntar tu constancia de Yape.
-          <Button className="mt-3" onClick={() => nav(`/comensal/pago/${o.id}`)}>Adjuntar constancia</Button>
+          {o.payment_method === 'yape_manual' ? 'Falta adjuntar tu constancia de Yape.' : 'Falta completar el pago de tu pedido.'}
+          <Button className="mt-3" onClick={() => nav(`/comensal/pago/${o.id}`)}>{o.payment_method === 'yape_manual' ? 'Adjuntar constancia' : 'Completar pago'}</Button>
         </div>
       )}
 
@@ -110,7 +111,9 @@ export function OrderDetail() {
           {o.receiver_name && o.receiver_name !== o.comensal_name && (
             <div className="flex gap-2"><Users size={16} className="mt-0.5 shrink-0 text-guinda" /> Lo recibe {o.receiver_name} · {o.receiver_phone}</div>
           )}
-          <div className="flex gap-2"><Phone size={16} className="mt-0.5 shrink-0 text-guinda" /> Pago: {o.payment_method === 'yape' ? 'Yape' : 'Efectivo al recibir'}</div>
+          <div className="flex gap-2"><Phone size={16} className="mt-0.5 shrink-0 text-guinda" />
+            <span>Pago: {PAYMENT_LABEL[o.payment_method]}{o.paid_at && <b className="text-ok"> · aprobado ✓</b>}{o.payment_id && <span className="block text-xs text-gris">Op. {o.payment_id}</span>}</span>
+          </div>
         </div>
       </Card>
 
@@ -156,6 +159,7 @@ export function ComensalProfile() {
   const nav = useNavigate()
   const [f, setF] = useState(() => ({ ...profile!, allergies: profile!.allergies.length ? profile!.allergies : ['Ninguna'] }))
   const [busy, setBusy] = useState(false)
+  const [credits, setCredits] = useState(false)
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
 
   async function save() {
@@ -188,6 +192,17 @@ export function ComensalProfile() {
         <Button onClick={save} loading={busy}>Guardar cambios</Button>
         <Button variant="secondary" onClick={async () => { await signOut(); nav('/') }}>Cerrar sesión</Button>
         <p className="flex items-center justify-center gap-1 text-center text-xs text-gris"><MapPin size={12} /> MAMAYS · Puno, Perú · {api.mode === 'demo' ? 'modo demo' : 'conectado'}</p>
+        {api.mode === 'demo' && (
+          <button onClick={() => setCredits(true)} className="mx-auto block text-xs font-semibold text-guinda underline">Créditos de las fotos de ejemplo</button>
+        )}
+        <Sheet open={credits} onClose={() => setCredits(false)} title="Créditos de fotos">
+          <p className="text-sm text-gris">Las fotos de los platos de ejemplo son de <b>Wikimedia Commons</b>, con licencias libres (CC BY / CC BY-SA). Toca cada una para ver su autor y licencia. En la app real, cada mamita sube las fotos de sus propios platos.</p>
+          <ul className="mt-3 divide-y divide-borde text-sm">
+            {CREDITS.map((c) => (
+              <li key={c.file} className="py-2"><a href={photoPage(c)} target="_blank" rel="noreferrer" className="font-semibold text-guinda underline">{c.title}</a><span className="block text-xs text-gris">{c.file}</span></li>
+            ))}
+          </ul>
+        </Sheet>
       </div>
     </Screen>
   )

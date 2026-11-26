@@ -8,6 +8,7 @@ import { useAuth, useCart, useNotifications, useToast } from '../context/AppCont
 import { api } from '../data'
 import type { ImageKind } from '../data/api'
 import { comprimirImagen, primerNombre } from '../lib/format'
+import { dishArt } from '../data/demoArt'
 
 /* ---------------- Marca ---------------- */
 export function Logo({ light = false, small = false }: { light?: boolean; small?: boolean }) {
@@ -42,6 +43,17 @@ export function Stars({ value, count, className = '' }: { value: number | null; 
       <span className="text-[#E9A23B]">★</span> {value.toFixed(1)}{count != null && <span> ({count})</span>}
     </span>
   )
+}
+
+/* ---------------- Foto de plato con respaldo ---------------- */
+const ARTS = ['arroz', 'queso', 'aji', 'trucha', 'sopa', 'quinua', 'verde', 'carne']
+/** Muestra la foto real; si no carga (sin internet o enlace roto), pone una ilustración en su lugar */
+export function DishPhoto({ src, alt, className = '', onClick }: { src?: string; alt: string; className?: string; onClick?: () => void }) {
+  const [failed, setFailed] = useState(false)
+  const seed = [...alt].reduce((a, c) => a + c.charCodeAt(0), 0)
+  const art = dishArt(ARTS[seed % ARTS.length], seed)
+  return <img src={!src || failed ? art : src} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer"
+    onError={() => setFailed(true)} onClick={onClick} className={className} />
 }
 
 /* ---------------- Botones ---------------- */

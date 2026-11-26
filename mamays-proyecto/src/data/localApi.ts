@@ -5,11 +5,12 @@
  */
 import type { Api, ImageKind } from './api'
 import type {
-  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PlaceOrderInput, Profile, SignUpInput,
+  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, SignUpInput,
 } from '../lib/types'
-import { blobToDataUrl, codigoPedido, uid } from '../lib/format'
-import { RESERVA_MINUTOS, ZONA_COORDS } from '../lib/constants'
-import { dishArt, kitchenArt } from './demoArt'
+import { blobToDataUrl, codigoPedido, expValida, luhn, sleep, uid } from '../lib/format'
+import { MOTIVOS_PAGO, RESERVA_MINUTOS, ZONA_COORDS } from '../lib/constants'
+import { kitchenArt } from './demoArt'
+import { PHOTOS, photoUrl, type RealPhoto } from './realPhotos'
 
 interface UserRow { profile: Profile; password: string }
 interface DB {
@@ -22,7 +23,7 @@ interface DB {
   session: string | null
 }
 
-const KEY = 'mamays-demo-v2'
+const KEY = 'mamays-demo-v3'
 const limaDate = (d: Date | string) =>
   new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Lima' })
 
@@ -70,36 +71,32 @@ function seed(): DB {
     phone: '987654321', allergies: ['Maní'] }, 'comensal@demo.pe')
 
   let n = 0
-  const d = (mamita_id: string, name: string, price: number, portions: number, art: string, extra: Partial<Dish>): Dish => ({
+  const d = (mamita_id: string, name: string, price: number, portions: number, photo: RealPhoto, extra: Partial<Dish>): Dish => ({
     id: uid(), mamita_id, name, description: '', category: 'Tradicional', price, portions, ingredients: '',
     allergens: [], tags: [], delivery_mode: 'ambos', delivery_cost: 3, available_from: '11:30', available_to: '15:00',
-    conservation: 'Consumir fresco', photos: [dishArt(art, ++n)], paused: false, created_at: iso(n * 60000), ...extra,
+    conservation: 'Consumir fresco', photos: [photoUrl(photo)], paused: false, created_at: iso(++n * 60000), ...extra,
   })
   const dishes: Dish[] = [
-    d(juana, 'Arroz chaufa de pollo', 12, 4, 'arroz', { description: 'Chaufa casero al wok con pollo, cebollita china y tortilla.',
-      ingredients: 'arroz, pollo, huevo, cebolla china, sillao, kion, ajo', allergens: ['Soya', 'Huevo'], tags: ['Se puede recalentar'], delivery_cost: 2.5 }),
-    d(juana, 'Queso frito', 12, 3, 'queso', { description: 'Queso fresco de la zona dorado a la sartén, con choclo y papa sancochada.',
-      ingredients: 'queso fresco, choclo, papa, ensalada de cebolla', allergens: ['Lactosa'], tags: ['Vegetariano', 'Consumir fresco'] }),
-    d(juana, 'Ají de gallina', 13, 5, 'aji', { description: 'Cremoso, con su huevito y aceituna.',
-      ingredients: 'gallina, ají amarillo, pan, leche, pecanas, queso, arroz, huevo', allergens: ['Gluten', 'Lactosa', 'Frutos secos', 'Huevo'], tags: ['Se puede recalentar'] }),
-    d(teo, 'Trucha frita', 15, 1, 'trucha', { description: 'Trucha del lago Titicaca, crocante por fuera y jugosa por dentro.',
-      ingredients: 'trucha, harina de maíz, arroz, papa, ensalada', allergens: ['Pescado'], tags: ['Consumir fresco'], delivery_mode: 'delivery', delivery_cost: 3, available_from: '12:00', available_to: '15:30' }),
-    d(teo, 'Chairo puneño', 13, 6, 'sopa', { category: 'Sopas', description: 'Sopa contundente del altiplano con chuño y chalona.',
+    d(juana, 'Arroz chaufa con cecina', 12, 4, PHOTOS.chaufa, { description: 'Chaufa al wok con cecina, huevo y plátano frito, como en casa.',
+      ingredients: 'arroz, cecina, huevo, plátano, cebolla china, sillao, kion, ajo', allergens: ['Soya', 'Huevo'], tags: ['Se puede recalentar'], delivery_cost: 2.5 }),
+    d(juana, 'Cau cau', 13, 3, PHOTOS.caucau, { description: 'Guiso criollo de mondongo y papa con palillo y hierbabuena.',
+      ingredients: 'mondongo, papa amarilla, ají amarillo, palillo, hierbabuena, cebolla, ajo, arroz', allergens: [], tags: ['Se puede recalentar'] }),
+    d(juana, 'Caldo de gallina', 12, 6, PHOTOS.caldo, { category: 'Sopas', description: 'Caldo bien concentrado con fideo, papa y huevo. Levanta muertos.',
+      ingredients: 'gallina, fideos, papa, huevo, kion, cebolla china', allergens: ['Gluten', 'Huevo'], tags: ['Se puede recalentar'] }),
+    d(teo, 'Pejerrey frito del Titicaca', 15, 1, PHOTOS.pejerrey, { description: 'Pejerrey del lago, crocante por fuera y jugoso por dentro, con papas y ensalada.',
+      ingredients: 'pejerrey, harina, papa, arroz, limón, ensalada', allergens: ['Pescado', 'Gluten'], tags: ['Consumir fresco'], delivery_mode: 'delivery', delivery_cost: 3, available_from: '12:00', available_to: '15:30' }),
+    d(teo, 'Chairo puneño', 13, 6, PHOTOS.chairo, { category: 'Sopas', description: 'Sopa contundente del altiplano con chuño, chalona y habas.',
       ingredients: 'carne de res, chalona, chuño, habas, trigo, papa, zapallo, hierbabuena', allergens: ['Gluten'], tags: ['Se puede recalentar'] }),
-    d(teo, 'Pesque de quinua', 11, 4, 'quinua', { category: 'Vegetariano', description: 'Quinua cremosa con leche y queso, acompañada de bistec opcional.',
-      ingredients: 'quinua, leche, queso fresco, mantequilla', allergens: ['Lactosa'], tags: ['Vegetariano', 'Saludable'] }),
-    d(marta, 'Olluquito de carne', 15, 5, 'carne', { description: 'Guiso tradicional con olluco en tiritas.',
-      ingredients: 'olluco, carne de res, ají amarillo, ajo, cebolla, arroz, perejil', allergens: [], tags: ['Se puede recalentar'], delivery_mode: 'recojo', delivery_cost: null, available_from: '12:00', available_to: '14:30' }),
-    d(marta, 'Locro de zapallo', 15, 4, 'quinua', { category: 'Vegetariano', description: 'Locro cremoso con choclo, habas y queso fresco.',
-      ingredients: 'zapallo, papa, choclo, habas, leche, queso fresco, arroz', allergens: ['Lactosa'], tags: ['Vegetariano', 'Saludable'], delivery_mode: 'recojo', delivery_cost: null }),
-    d(marta, 'Estofado de pollo', 15, 0, 'carne', { description: 'Pollo jugoso en salsa de tomate con papas y zanahoria.',
-      ingredients: 'pollo, tomate, papa, zanahoria, arvejas, arroz', allergens: [], tags: ['Se puede recalentar'], delivery_mode: 'recojo', delivery_cost: null }),
-    d(elena, 'Sajta de pollo', 10, 3, 'aji', { description: 'Plato puneño con salsa de ají y maní tostado.',
-      ingredients: 'pollo, ají panca, maní tostado, papa, chuño, cebolla', allergens: ['Maní'], tags: ['Se puede recalentar', 'Consumir fresco'], delivery_cost: 2 }),
-    d(elena, 'Ensalada de quinua', 12, 6, 'verde', { category: 'Vegano', description: 'Quinua, palta, tomate y limón. Fresca y ligera.',
-      ingredients: 'quinua, palta, tomate, pepino, cebolla, limón, aceite de oliva', allergens: [], tags: ['Vegano', 'Saludable', 'Bajo en sal'], delivery_cost: 2 }),
-    d(elena, 'Mazamorra morada', 5, 8, 'morado', { category: 'Postres', description: 'Postre de maíz morado con frutas y canela.',
-      ingredients: 'maíz morado, piña, membrillo, guindones, canela, clavo, chuño', allergens: [], tags: ['Vegano', 'Consumir fresco'], delivery_cost: 2 }),
+    d(teo, 'Kispiñas', 5, 10, PHOTOS.kispinas, { category: 'Saludable', description: 'Panecillos aymaras de harina de quinua cocidos al vapor. Ideales para el lonche.',
+      ingredients: 'harina de quinua, cal, sal, agua', allergens: [], tags: ['Vegano', 'Saludable'], delivery_cost: 2 }),
+    d(marta, 'Olluquito con pollo', 15, 5, PHOTOS.olluquitoPollo, { description: 'Guiso tradicional con olluco en tiritas y pollo, con su arroz blanco.',
+      ingredients: 'olluco, pollo, ají panca, ajo, cebolla, arroz, perejil', allergens: [], tags: ['Se puede recalentar'], delivery_mode: 'recojo', delivery_cost: null, available_from: '12:00', available_to: '14:30' }),
+    d(marta, 'Olluquito con cerdo', 15, 0, PHOTOS.olluquitoCerdo, { description: 'La versión serrana: olluco con cerdo y arroz graneadito.',
+      ingredients: 'olluco, carne de cerdo, ají panca, ajo, cebolla, arroz', allergens: [], tags: ['Se puede recalentar'], delivery_mode: 'recojo', delivery_cost: null }),
+    d(elena, 'Chairo de la casa', 12, 4, PHOTOS.chairo2, { category: 'Sopas', description: 'Chairo con chuño negro, charqui y mote. Receta de la abuela.',
+      ingredients: 'charqui, chuño, mote, habas, papa, zanahoria, hierbabuena, maní tostado', allergens: ['Maní'], tags: ['Se puede recalentar', 'Consumir fresco'], delivery_cost: 2 }),
+    d(elena, 'Jugo de quinua', 4, 12, PHOTOS.jugoQuinua, { category: 'Saludable', description: 'Bebida tibia de quinua con manzana y canela.',
+      ingredients: 'quinua, manzana, canela, clavo, azúcar, leche', allergens: ['Lactosa'], tags: ['Vegetariano', 'Saludable'], delivery_cost: 2 }),
   ]
 
   // Un pedido de ayer ya entregado y valorado, para que haya historial y valoraciones
@@ -110,22 +107,26 @@ function seed(): DB {
     mamita_id: juana, mamita_name: 'Juana Mamani', status: 'entregado', mode: 'recojo', payment_method: 'yape',
     subtotal: 12, delivery_cost: 0, total: 12, delivery_address: '', pickup_address: 'Jr. Ejemplo 101', receiver_name: comensal.profile.full_name,
     receiver_phone: comensal.profile.phone, payer_name: comensal.profile.full_name, notes: '', voucher_url: '',
+    payment_id: 'DEMO-YAPE-4069714', payment_detail: 'accredited', paid_at: ayer,
     reserved_until: null, history: ['enviado', 'aceptado', 'preparando', 'listo', 'entregado'].map((s, i) => ({ status: s as OrderStatus, at: new Date(new Date(ayer).getTime() + i * 600000).toISOString() })),
     rating: 5, review: '¡Sabor de casa de verdad!', items: [{ dish_id: chaufa.id, dish_name: chaufa.name, unit_price: 12, qty: 1, photo: chaufa.photos[0] }],
     created_at: ayer,
   }]
 
-  return { v: 2, users: [...mamitas, comensal], dishes, orders, notifications: [], favorites: {}, session: null }
+  return { v: 3, users: [...mamitas, comensal], dishes, orders, notifications: [], favorites: {}, session: null }
 }
 
 export class LocalApi implements Api {
   mode = 'demo' as const
+  onlinePayments = 'demo' as const
+  mercadoPagoPublicKey = ''
   private db: DB
+  private challenges = new Map<string, { code: string; tries: number }>()
 
   constructor() {
     let db: DB | null = null
     try { db = JSON.parse(localStorage.getItem(KEY) || 'null') } catch { db = null }
-    this.db = db && db.v === 2 ? db : seed()
+    this.db = db && db.v === 3 ? db : seed()
     try { localStorage.setItem(KEY, JSON.stringify(this.db)) } catch { /* sin almacenamiento: funciona en memoria */ }
   }
 
@@ -278,13 +279,15 @@ export class LocalApi implements Api {
       return { dish_id: d.id, dish_name: d.name, unit_price: d.price, qty: l.qty, photo: d.photos[0] ?? '' }
     })
     const now = new Date()
-    const status: OrderStatus = input.payment_method === 'yape' ? 'reservado' : 'enviado'
+    if (!['yape', 'tarjeta', 'yape_manual', 'efectivo'].includes(input.payment_method)) throw new Error('PAGO_INVALIDO')
+    const status: OrderStatus = input.payment_method === 'efectivo' ? 'enviado' : 'reservado'
     const o: Order = {
       id: uid(), code: codigoPedido(), comensal_id: me.id, comensal_name: me.full_name, mamita_id: mamita.id,
       mamita_name: mamita.full_name, status, mode: input.mode, payment_method: input.payment_method, subtotal,
       delivery_cost: delivery, total: subtotal + delivery, delivery_address: input.mode === 'delivery' ? input.delivery_address.trim() : '', pickup_address: '',
       receiver_name: input.receiver_name.trim() || me.full_name, receiver_phone: input.receiver_phone.trim() || me.phone,
       payer_name: input.payer_name.trim() || me.full_name, notes: input.notes.slice(0, 300), voucher_url: '',
+      payment_id: '', payment_detail: '', paid_at: null,
       reserved_until: status === 'reservado' ? new Date(now.getTime() + RESERVA_MINUTOS * 60000).toISOString() : null,
       history: [{ status, at: now.toISOString() }], rating: null, review: '', items, created_at: now.toISOString(),
     }
@@ -298,7 +301,7 @@ export class LocalApi implements Api {
     if (!o) throw new Error('PEDIDO_NO_EXISTE')
     this.expire()
     if (o.status === 'expirado') { this.save(); throw new Error('RESERVA_VENCIDA') }
-    if (o.status !== 'reservado') throw new Error('ESTADO_INVALIDO')
+    if (o.status !== 'reservado' || o.payment_method !== 'yape_manual') throw new Error('ESTADO_INVALIDO')
     if (!ref) throw new Error('FALTA_CONSTANCIA')
     o.voucher_url = ref; o.status = 'enviado'; o.reserved_until = null
     o.history.push({ status: 'enviado', at: new Date().toISOString() })
@@ -359,6 +362,82 @@ export class LocalApi implements Api {
     o.rating = Math.min(5, Math.max(1, Math.round(rating))); o.review = review.slice(0, 400)
     this.notify(o.mamita_id, `Nueva valoración ★${o.rating}`, `${o.comensal_name} valoró su pedido ${o.code}.`, o.id)
     this.save()
+  }
+
+  // ---------- Pagos en línea (SIMULADOS en modo demo: no se cobra nada) ----------
+  private markPaid(o: Order, paymentId: string) {
+    const now = new Date().toISOString()
+    o.status = 'enviado'; o.paid_at = now; o.reserved_until = null
+    o.payment_id = paymentId; o.payment_detail = 'accredited'
+    o.history.push({ status: 'enviado', at: now })
+    this.notify(o.mamita_id, '¡Nuevo pedido pagado!',
+      `${o.comensal_name} pagó S/ ${o.total.toFixed(2)} con ${o.payment_method === 'yape' ? 'Yape' : 'tarjeta'} (${o.code}).`, o.id)
+    this.save()
+  }
+  private payableOrder(orderId: string): Order | PayResult {
+    const me = this.me()
+    this.expire()
+    const o = this.db.orders.find((x) => x.id === orderId && x.comensal_id === me.id)
+    if (!o) throw new Error('PEDIDO_NO_EXISTE')
+    if (o.status === 'expirado') return { status: 'rejected', message: 'Pasaron los 15 minutos de reserva. Vuelve a hacer tu pedido.' }
+    if (o.status !== 'reservado') return { status: 'rejected', message: 'Este pedido ya no está esperando pago.' }
+    return o
+  }
+  async payOnline(orderId: string, input: PayInput): Promise<PayResult> {
+    const o = this.payableOrder(orderId)
+    if ('status' in o && !('code' in o)) return o as PayResult
+    const order = o as Order
+    await sleep(1100)
+    if (order.payment_method === 'yape') {
+      const phone = (input.phone ?? '').replace(/\D/g, '')
+      const otp = input.otp ?? ''
+      if (!/^\d{9}$/.test(phone)) return { status: 'rejected', message: 'Ingresa tu celular Yape de 9 dígitos.' }
+      if (!/^\d{6}$/.test(otp)) return { status: 'rejected', message: 'El código de aprobación tiene 6 dígitos.' }
+      // Mismos números de prueba que publica Mercado Pago para Yape
+      const PRUEBA: Record<string, string> = {
+        '111111112': 'cc_rejected_call_for_authorize', '111111113': 'cc_amount_rate_limit_exceeded',
+        '111111114': 'cc_unsupported_unsupported', '111111115': 'cc_rejected_card_type_not_allowed',
+        '111111116': 'cc_rejected_max_attempts', '111111117': 'cc_rejected_bad_filled_security_code', '111111118': 'cc_rejected_form_error',
+      }
+      if (PRUEBA[phone]) return { status: 'rejected', message: MOTIVOS_PAGO[PRUEBA[phone]] }
+      if (otp === '000000') return { status: 'rejected', message: MOTIVOS_PAGO.cc_rejected_bad_filled_security_code }
+      this.markPaid(order, `DEMO-YAPE-${Date.now().toString().slice(-8)}`)
+      return { status: 'approved' }
+    }
+    if (order.payment_method === 'tarjeta') {
+      const c = input.card
+      if (!c || !luhn(c.number)) return { status: 'rejected', message: 'El número de tarjeta no es válido.' }
+      if (!expValida(c.exp)) return { status: 'rejected', message: 'La tarjeta está vencida o la fecha es incorrecta.' }
+      if (!/^\d{3,4}$/.test(c.cvv)) return { status: 'rejected', message: 'El CVV debe tener 3 o 4 dígitos.' }
+      const titular = c.name.trim().toUpperCase()
+      if (titular.length < 2) return { status: 'rejected', message: 'Escribe el nombre como figura en la tarjeta.' }
+      if (titular === 'OTHE') return { status: 'rejected', message: MOTIVOS_PAGO.cc_rejected_other_reason }
+      if (titular === 'FUND') return { status: 'rejected', message: MOTIVOS_PAGO.cc_rejected_insufficient_amount }
+      if (titular === 'SECU') return { status: 'rejected', message: MOTIVOS_PAGO.cc_rejected_bad_filled_security_code }
+      // 3-D Secure: el "banco" envía un código de verificación
+      const code = String(Math.floor(100000 + Math.random() * 900000))
+      this.challenges.set(order.id, { code, tries: 0 })
+      order.reserved_until = new Date(Math.max(Date.now() + 10 * 60000, new Date(order.reserved_until ?? 0).getTime())).toISOString()
+      this.save()
+      const me = this.me()
+      return { status: 'challenge', demoCode: code, maskedPhone: `*** *** ${me.phone.slice(-3) || '000'}` }
+    }
+    throw new Error('PAGO_INVALIDO')
+  }
+  async confirmChallenge(orderId: string, code?: string): Promise<PayResult> {
+    const o = this.payableOrder(orderId)
+    if ('status' in o && !('code' in o)) return o as PayResult
+    const ch = this.challenges.get(orderId)
+    if (!ch) return { status: 'rejected', message: 'La verificación expiró. Intenta pagar de nuevo.' }
+    await sleep(700)
+    if ((code ?? '').trim() !== ch.code) {
+      ch.tries++
+      if (ch.tries >= 3) { this.challenges.delete(orderId); return { status: 'rejected', message: MOTIVOS_PAGO.cc_rejected_3ds_challenge } }
+      throw new Error(`CODIGO_INCORRECTO:${3 - ch.tries}`)
+    }
+    this.challenges.delete(orderId)
+    this.markPaid(o as Order, `DEMO-CARD-${Date.now().toString().slice(-8)}`)
+    return { status: 'approved' }
   }
 
   // ---------- Avisos y favoritos ----------

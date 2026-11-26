@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Api, ImageKind } from './api'
 import type {
-  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PlaceOrderInput, Profile, SignUpInput,
+  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, SignUpInput,
 } from '../lib/types'
 import { uid } from '../lib/format'
 
@@ -47,10 +47,14 @@ function mapOrder(r: Record<string, unknown>): Order {
 
 export class SupabaseApi implements Api {
   mode = 'supabase' as const
+  onlinePayments: 'mercadopago' | 'none'
+  mercadoPagoPublicKey: string
   private sb: SupabaseClient
   private uidCache: string | null = null
 
-  constructor(url: string, key: string) {
+  constructor(url: string, key: string, mpPublicKey = '') {
+    this.mercadoPagoPublicKey = mpPublicKey
+    this.onlinePayments = mpPublicKey ? 'mercadopago' : 'none'
     this.sb = createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } })
   }
 
@@ -167,6 +171,25 @@ export class SupabaseApi implements Api {
   }
   async rateOrder(id: string, rating: number, review: string) {
     check(await this.sb.rpc('rate_order', { p_order: id, p_rating: rating, p_review: review }))
+  }
+
+  // ---------- Pagos en línea: la Edge Function "pagar" habla con Mercado Pago ----------
+  private async callPagar(body: Record<string, unknown>): Promise<PayResult> {
+    const { data, error } = await this.sb.functions.invoke('pagar', { body })
+    if (error) {
+      let msg = error.message
+      try { const j = await (error as unknown as { context: Response }).context.json(); msg = j.error || j.message || msg } catch { /* sin cuerpo */ }
+      throw new Error(msg)
+    }
+    if (data?.error) throw new Error(data.error)
+    return data as PayResult
+  }
+  async payOnline(orderId: string, input: PayInput) {
+    return this.callPagar({ action: 'pay', order_id: orderId, token: input.token, payment_method_id: input.payment_method_id,
+      issuer_id: input.issuer_id, installments: input.installments ?? 1, identification: input.identification })
+  }
+  async confirmChallenge(orderId: string) {
+    return this.callPagar({ action: 'status', order_id: orderId })
   }
 
   // ---------- Avisos y favoritos ----------

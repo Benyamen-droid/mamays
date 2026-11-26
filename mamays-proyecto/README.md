@@ -1,4 +1,4 @@
-# MAMAYS 2.1 · comida casera hecha con amor
+# MAMAYS 2.2 · comida casera hecha con amor
 
 App móvil que conecta **comensales de Puno** con **mamitas** que cocinan en casa.
 Hecha con React + Vite + Tailwind, **Supabase** como backend y **Capacitor** para generar el APK de Android.
@@ -24,6 +24,36 @@ window.MAMAYS_CONFIG = {
 ```
 
 > La *anon key* es pública por diseño: la protegen las políticas RLS. **Nunca** pongas ahí la *service_role key*.
+
+---
+
+## Paso 0.5 · Pagos en línea con Mercado Pago (Yape con código de aprobación + tarjeta con 3-D Secure)
+
+MAMAYS cobra con la **API de Mercado Pago Perú**, que admite **Yape** (celular + código de aprobación de 6 dígitos) y **tarjetas** con verificación **3-D Secure** del banco.
+
+> Sin configurarlo, el **modo demo** simula ambos flujos para que puedas probarlos (no se cobra nada). Con Supabase pero sin Mercado Pago, la app ofrece "Yape a la mamita con constancia" y efectivo.
+
+1. Crea tu cuenta en **mercadopago.com.pe** y entra a **Tus integraciones → Crear aplicación** (tipo: pagos online / Checkout API).
+2. En **Credenciales de prueba** copia:
+   - **Public Key** (`TEST-...`) → pégala en `public/config.js` como `mercadoPagoPublicKey`.
+   - **Access Token** (`TEST-...`) → **nunca** va en la app: guárdalo en **Supabase → Edge Functions → Secrets** con el nombre `MP_ACCESS_TOKEN`.
+3. Crea la función de cobro en **Supabase → Edge Functions → Deploy a new function → Via Editor**, con el nombre **`pagar`**, y pega el contenido de `supabase/functions/pagar/index.ts`. Con la CLI: `supabase functions deploy pagar`.
+4. Vuelve a ejecutar `supabase/schema.sql` (agrega las columnas y funciones de pago; no borra datos).
+
+**Datos de prueba de Mercado Pago:**
+
+| Medio | Datos | Resultado |
+|---|---|---|
+| Yape | celular `111111111`, código `123456` | aprobado |
+| Yape | celular `111111112`, código `123456` | rechazado (pide autorizar) |
+| Tarjeta 3-D Secure | Mastercard `5483 9281 6457 4623`, CVV `123`, vence `11/30` | pide verificación → **Confirm** → aprobado |
+| Tarjeta 3-D Secure | Mastercard `5361 9568 0611 7557`, CVV `123`, vence `11/30` | verificación fallida |
+
+En el **modo demo**: Yape acepta cualquier celular y código (`000000` simula un código vencido); la tarjeta de prueba es `4009 1753 3280 6176` y el banco simulado te muestra el código de verificación en pantalla.
+
+**Cobrar de verdad:** cambia a las credenciales de **producción** (`APP_USR-...`) después de activarlas en Mercado Pago. El dinero llega a la cuenta de Mercado Pago de MAMAYS; Mercado Pago cobra una comisión por venta y tú liquidas a cada mamita (o, más adelante, usas su modelo *Marketplace* para dividir el pago automáticamente). Si una mamita rechaza un pedido ya pagado, la devolución se hace desde Mercado Pago.
+
+**Seguridad:** el monto lo toma el servidor desde la base de datos (no del celular); los datos de la tarjeta viajan en campos seguros directo a Mercado Pago (MAMAYS nunca los ve); y solo la función del servidor puede marcar un pedido como pagado.
 
 ---
 
@@ -84,6 +114,9 @@ Para cambiar Supabase sin recompilar, edita `config.js` dentro de la carpeta pub
 | Sin rechazo ni cancelación | La mamita puede **rechazar con motivo** y el comensal puede **cancelar** antes de que lo acepten |
 | Sin valoraciones reales | El comensal valora de ★1 a ★5 tras la entrega; se promedia por plato y por mamita |
 | Ventas sin detalle | **Mis ventas**: hoy, 7 y 30 días, gráfico semanal y platos más pedidos |
+| Pago solo con captura de Yape | **Yape en línea** (celular + código de aprobación) y **tarjeta con 3-D Secure** vía Mercado Pago |
+| Alergias fáciles de pasar por alto | **Alerta inmediata** al abrir un plato con tus alérgenos y confirmación obligatoria para agregarlo |
+| Imágenes de ejemplo dibujadas | **Fotos reales** de platos andinos (Wikimedia Commons, con créditos); en producción, cada mamita sube las suyas |
 
 ## Seguridad (Supabase)
 
@@ -98,6 +131,8 @@ Para cambiar Supabase sin recompilar, edita `config.js` dentro de la carpeta pub
 public/config.js            ← datos de Supabase (vacío = modo demo)
 supabase/schema.sql         ← base de datos completa (ejecutar 1 vez)
 src/data/                   ← API común: supabaseApi.ts (nube) y localApi.ts (demo)
+src/components/payments.tsx ← Yape (celular + código), tarjeta y verificación 3-D Secure
+supabase/functions/pagar/   ← función del servidor que cobra con Mercado Pago
 src/pages/auth|comensal|mamita
 src/components/             ← UI reutilizable (DishCard, timeline, mapa…)
 scripts/android-prepare.mjs ← crea y configura el proyecto Android
@@ -107,6 +142,8 @@ resources/android/          ← íconos y splash de la app
 
 ## Verificación realizada
 
-- `schema.sql` probado en **PostgreSQL real (PGlite)** con un entorno tipo Supabase: **44 pruebas OK**, entre ellas RLS, validaciones, reserva y vencimiento, permisos de las constancias y protección contra sobreventa.
-- Recorrido completo en **Chromium móvil** (390×844), de registro → pedido → pago → la mamita atiende → valoración: **33 pasos OK**, sin errores de consola.
+- `schema.sql` probado en **PostgreSQL real (PGlite)** con un entorno tipo Supabase: **53 pruebas OK**, entre ellas RLS, validaciones, reserva y vencimiento, pagos en línea (solo el servidor puede confirmarlos, sin dobles cobros) y protección contra sobreventa.
+- La función `pagar` pasa la verificación de tipos de **Deno** (el entorno de Supabase Edge Functions).
+- Recorridos completos en **Chromium móvil** (390×844): **34 + 20 pasos OK**, sin errores de consola (registro, alerta de alergia, Yape con código, tarjeta con 3-D Secure, la mamita atiende, ventas y valoración).
+- La conexión real con Mercado Pago no se pudo probar desde aquí (sin acceso a internet externo): pruébala con las credenciales y datos de prueba de la tabla de arriba.
 - El proyecto Android se genera con Capacitor 7 (SDK 35). El APK se compila con la alternativa A o la B.

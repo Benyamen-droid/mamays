@@ -1,5 +1,5 @@
 import type {
-  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PlaceOrderInput, Profile, SignUpInput,
+  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PayInput, PayResult, PlaceOrderInput, Profile, SignUpInput,
 } from '../lib/types'
 
 export type ImageKind = 'dish' | 'avatar' | 'home' | 'voucher'
@@ -7,6 +7,9 @@ export type ImageKind = 'dish' | 'avatar' | 'home' | 'voucher'
 /** Contrato único: la app no sabe si habla con Supabase o con el modo demo. */
 export interface Api {
   mode: 'demo' | 'supabase'
+  /** Pagos en línea: demo (simulados), mercadopago (reales) o none (solo constancia/efectivo) */
+  onlinePayments: 'demo' | 'mercadopago' | 'none'
+  mercadoPagoPublicKey: string
 
   // Sesión
   currentProfile(): Promise<Profile | null>
@@ -37,6 +40,11 @@ export interface Api {
   setOrderStatus(id: string, status: OrderStatus, reason?: string): Promise<void>
   rateOrder(id: string, rating: number, review: string): Promise<void>
 
+  // Pagos en línea (Yape con código de aprobación / tarjeta con 3-D Secure)
+  payOnline(orderId: string, input: PayInput): Promise<PayResult>
+  /** Tras la verificación 3-D Secure: en demo valida el código; con Mercado Pago consulta el estado */
+  confirmChallenge(orderId: string, code?: string): Promise<PayResult>
+
   // Avisos y favoritos
   listNotifications(): Promise<AppNotification[]>
   markNotificationsRead(): Promise<void>
@@ -66,6 +74,8 @@ export function mensajeError(e: unknown): string {
     'User already registered': 'Ya existe una cuenta con ese correo.',
     'Email not confirmed': 'Confirma tu correo antes de ingresar (revisa tu bandeja de entrada).',
     'Failed to fetch': 'Sin conexión. Revisa tu internet e inténtalo otra vez.',
+    PAGO_INVALIDO: 'Ese medio de pago no está disponible.',
+    CODIGO_INCORRECTO: `Código incorrecto.${extra ? ` Te quedan ${extra} intentos.` : ''}`,
   }
   for (const k of Object.keys(map)) if (raw.includes(k) || code === k) return map[k]
   if (/Password should be at least/i.test(raw)) return 'La contraseña debe tener al menos 6 caracteres.'

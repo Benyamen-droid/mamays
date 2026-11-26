@@ -51,7 +51,7 @@ export const ETIQUETAS = [
 ] as const
 
 export const STATUS_LABEL: Record<OrderStatus, string> = {
-  reservado: 'Esperando constancia',
+  reservado: 'Esperando pago',
   enviado: 'Esperando revisión de la mamita',
   aceptado: 'Pedido aceptado',
   preparando: 'En preparación',
@@ -110,3 +110,24 @@ export const NEXT_ACTION_LABEL: Partial<Record<OrderStatus, string>> = {
 }
 
 export const RESERVA_MINUTOS = 15
+
+/** Motivos de rechazo de Mercado Pago, en palabras simples (los mismos que usa la Edge Function) */
+export const MOTIVOS_PAGO: Record<string, string> = {
+  cc_rejected_bad_filled_security_code: 'El código de aprobación o el CVV es incorrecto o ya venció. Genera uno nuevo e inténtalo otra vez.',
+  cc_rejected_call_for_authorize: 'Tu banco o Yape pide que autorices este pago. Revisa tu app e inténtalo de nuevo.',
+  cc_amount_rate_limit_exceeded: 'Superaste el límite diario de tu Yape. Prueba con otro medio de pago.',
+  cc_rejected_insufficient_amount: 'Saldo insuficiente.',
+  cc_rejected_max_attempts: 'Demasiados intentos. Espera unos minutos o usa otro medio de pago.',
+  cc_rejected_card_type_not_allowed: 'Este medio de pago no está permitido para esta compra.',
+  cc_unsupported_unsupported: 'Este medio de pago no está disponible.',
+  cc_rejected_form_error: 'Hay un dato incorrecto. Revisa e inténtalo otra vez.',
+  cc_rejected_3ds_challenge: 'No se pudo verificar tu identidad con tu banco.',
+  cc_rejected_other_reason: 'Tu banco rechazó el pago.',
+}
+
+export const PAYMENT_LABEL: Record<string, string> = {
+  yape: 'Yape en línea',
+  tarjeta: 'Tarjeta de crédito/débito',
+  yape_manual: 'Yape a la mamita (constancia)',
+  efectivo: 'Efectivo al recibir',
+}

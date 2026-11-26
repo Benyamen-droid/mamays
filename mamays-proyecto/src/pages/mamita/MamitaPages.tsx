@@ -10,7 +10,7 @@ import type { DeliveryMode, Dish, DishView, Order } from '../../lib/types'
 import { celularValido, fechaHora, primerNombre, soles } from '../../lib/format'
 import { OrderItems, OrderTotals, StatusBadge, VoucherImage } from '../../components/orders'
 import {
-  Avatar, BackButton, Button, Card, CheckGrid, EmptyState, Eyebrow, Field, ImagePicker, Loading, PageTitle, Screen, Segmented, Sheet, Stars, Stepper,
+  Avatar, BackButton, Button, Card, CheckGrid, DishPhoto, EmptyState, Eyebrow, Field, ImagePicker, Loading, PageTitle, Screen, Segmented, Sheet, Stars, Stepper,
 } from '../../components/ui'
 
 const limaDay = (iso: string | Date) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Lima' })
@@ -95,7 +95,7 @@ export function MyDishes() {
             <article key={d.id} className="overflow-hidden rounded-[22px] border border-borde bg-white">
               <div className="flex">
                 <div className="relative w-32 shrink-0 bg-[#2b2023]">
-                  {d.photos[0] && <img src={d.photos[0]} alt={d.name} className="absolute inset-0 h-full w-full object-cover" />}
+                  <DishPhoto src={d.photos[0]} alt={d.name} className="absolute inset-0 h-full w-full object-cover" />
                 </div>
                 <div className="flex-1 p-3.5">
                   <div className="flex items-start justify-between">
@@ -280,7 +280,11 @@ export function MamitaOrders() {
   }
   async function doReject() {
     if (!reject) return
-    try { await api.setOrderStatus(reject.id, 'rechazado', reason.trim()); toast('Pedido rechazado. Recuerda devolver el Yape si ya te pagaron.', 'info'); setReject(null); setReason(''); load() }
+    try {
+      await api.setOrderStatus(reject.id, 'rechazado', reason.trim())
+      toast(reject.paid_at ? 'Pedido rechazado. Devuelve el pago desde Mercado Pago (Actividad → el pago → Devolver).' : 'Pedido rechazado. Si ya te yapearon, devuelve el dinero.', 'info')
+      setReject(null); setReason(''); load()
+    }
     catch (e) { toast(mensajeError(e), 'error') }
   }
 
@@ -319,13 +323,20 @@ export function MamitaOrders() {
                   {o.notes && <div className="rounded-xl bg-white p-2 text-[13px]">📝 {o.notes}</div>}
                 </div>
                 <div className="mt-3"><OrderTotals o={o} /></div>
-                <div className={`mt-3 flex items-center justify-between rounded-2xl p-3 ${o.payment_method === 'yape' ? 'bg-crema-200' : 'bg-[#e9f0fb]'}`}>
-                  <span className="text-sm font-bold">{o.payment_method === 'yape' ? 'YAPE · con constancia' : 'EFECTIVO · cobrar al entregar'}</span>
-                  {o.payment_method === 'yape' && o.voucher_url && (
+                <div className={`mt-3 flex items-center justify-between gap-2 rounded-2xl p-3 ${o.paid_at ? 'bg-[#e8f5ee]' : o.payment_method === 'efectivo' ? 'bg-[#e9f0fb]' : 'bg-crema-200'}`}>
+                  <span className="text-sm font-bold">
+                    {o.payment_method === 'yape' && <>YAPE · <span className="text-ok">pagado en línea ✓</span></>}
+                    {o.payment_method === 'tarjeta' && <>TARJETA · <span className="text-ok">pagado en línea ✓</span></>}
+                    {o.payment_method === 'yape_manual' && 'YAPE · con constancia'}
+                    {o.payment_method === 'efectivo' && 'EFECTIVO · cobrar al entregar'}
+                    {o.payment_id && <span className="block text-[11px] font-normal text-gris">Op. {o.payment_id}</span>}
+                  </span>
+                  {o.payment_method === 'yape_manual' && o.voucher_url && (
                     <button onClick={() => setVoucher(o.voucher_url)} className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-white px-3 py-1.5 text-xs font-bold text-guinda shadow-sm"><Eye size={14} /> Ver constancia</button>
                   )}
                 </div>
-                {o.status === 'enviado' && o.payment_method === 'yape' && <p className="mt-2 text-xs text-gris">Verifica en tu app de Yape que llegaron {soles(o.total)} antes de aceptar.</p>}
+                {o.status === 'enviado' && o.payment_method === 'yape_manual' && <p className="mt-2 text-xs text-gris">Verifica en tu app de Yape que llegaron {soles(o.total)} antes de aceptar.</p>}
+                {o.status === 'enviado' && o.paid_at && <p className="mt-2 text-xs text-ok">Mercado Pago ya confirmó el cobro de {soles(o.total)}.</p>}
                 {n && (
                   <div className="mt-3 flex gap-2">
                     {['enviado', 'aceptado'].includes(o.status) && <Button variant="secondary" full={false} onClick={() => setReject(o)}>Rechazar</Button>}

@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { ChevronRight, Heart, Timer, TriangleAlert } from 'lucide-react'
 import type { DishView } from '../lib/types'
 import { estadoHorario, horarioCorto, soles } from '../lib/format'
-import { Stars, Tag } from './ui'
+import { DishPhoto, Stars, Tag } from './ui'
 
 export function dishTags(d: DishView, alergiasUsuario: string[] = []) {
   const tags: { label: string; alert?: boolean }[] = []
@@ -26,7 +26,7 @@ export function DishCard({ d, fav, onFav, userAllergies = [] }: { d: DishView; f
     <article className="rise flex flex-col overflow-hidden rounded-[22px] border border-borde bg-white shadow-[0_6px_18px_-12px_rgb(46_35_38/0.35)]">
       <div className="relative">
         <Link to={`/comensal/plato/${d.id}`} className="relative block aspect-[4/3] bg-[#2b2023]" aria-label={`Ver ${d.name}`}>
-          {d.photos[0] && <img src={d.photos[0]} alt={d.name} loading="lazy" className={`h-full w-full object-cover ${agotado ? 'grayscale-[60%]' : ''}`} />}
+          <DishPhoto src={d.photos[0]} alt={d.name} className={`h-full w-full object-cover ${agotado ? 'grayscale-[60%]' : ''}`} />
           {agotado && (
             <div className="absolute inset-0 grid place-items-center bg-guinda/80">
               <span className="rounded-full border border-white/60 px-3 py-1 text-xs font-extrabold tracking-[0.2em] text-white">AGOTADO</span>
