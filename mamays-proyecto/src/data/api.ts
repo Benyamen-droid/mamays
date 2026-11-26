@@ -1,0 +1,74 @@
+import type {
+  AppNotification, Dish, DishView, MamitaPublic, Order, OrderStatus, PlaceOrderInput, Profile, SignUpInput,
+} from '../lib/types'
+
+export type ImageKind = 'dish' | 'avatar' | 'home' | 'voucher'
+
+/** Contrato único: la app no sabe si habla con Supabase o con el modo demo. */
+export interface Api {
+  mode: 'demo' | 'supabase'
+
+  // Sesión
+  currentProfile(): Promise<Profile | null>
+  signIn(email: string, password: string): Promise<Profile>
+  signUp(input: SignUpInput): Promise<{ profile: Profile | null; needsConfirmation: boolean }>
+  signOut(): Promise<void>
+  resetPassword(email: string): Promise<void>
+  updateProfile(patch: Partial<Profile>): Promise<Profile>
+
+  // Catálogo público
+  listDishes(): Promise<DishView[]>
+  getDish(id: string): Promise<DishView | null>
+  listMamitas(): Promise<MamitaPublic[]>
+  getMamita(id: string): Promise<MamitaPublic | null>
+
+  // Mamita
+  listMyDishes(): Promise<DishView[]>
+  saveDish(d: Partial<Dish>): Promise<Dish>
+  deleteDish(id: string): Promise<void>
+  uploadImage(kind: ImageKind, blob: Blob): Promise<string>
+  resolveImage(kind: ImageKind, ref: string): Promise<string>
+
+  // Pedidos
+  placeOrder(input: PlaceOrderInput): Promise<string>
+  submitVoucher(orderId: string, voucherRef: string): Promise<void>
+  listMyOrders(): Promise<Order[]>
+  getOrder(id: string): Promise<Order | null>
+  setOrderStatus(id: string, status: OrderStatus, reason?: string): Promise<void>
+  rateOrder(id: string, rating: number, review: string): Promise<void>
+
+  // Avisos y favoritos
+  listNotifications(): Promise<AppNotification[]>
+  markNotificationsRead(): Promise<void>
+  listFavorites(): Promise<string[]>
+  toggleFavorite(dishId: string): Promise<boolean>
+}
+
+/** Traduce los códigos de error del servidor a mensajes para el usuario */
+export function mensajeError(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e ?? '')
+  const [code, extra] = raw.split(':').map((x) => x.trim())
+  const map: Record<string, string> = {
+    SIN_STOCK: `Ya no quedan porciones suficientes de ${extra ?? 'ese plato'}.`,
+    PLATO_PAUSADO: `${extra ?? 'El plato'} está pausado por la mamita.`,
+    SOLO_RECOJO: `${extra ?? 'Este plato'} solo está disponible para recojo.`,
+    SOLO_DELIVERY: `${extra ?? 'Este plato'} solo está disponible por delivery.`,
+    PLATOS_DE_OTRA_MAMITA: 'Tu carrito solo puede tener platos de una misma mamita.',
+    FALTA_DIRECCION: 'Indica la dirección de entrega para el delivery.',
+    CARRITO_VACIO: 'Tu carrito está vacío.',
+    RESERVA_VENCIDA: 'Pasaron los 15 minutos de reserva. Vuelve a hacer tu pedido.',
+    FALTA_CONSTANCIA: 'Adjunta la captura de tu pago.',
+    TRANSICION_NO_PERMITIDA: 'Ese cambio de estado ya no es posible.',
+    YA_VALORADO: 'Ya valoraste este pedido.',
+    SOLO_COMENSALES: 'Solo las cuentas de comensal pueden hacer pedidos.',
+    NO_AUTENTICADO: 'Tu sesión terminó. Vuelve a ingresar.',
+    'Invalid login credentials': 'Correo o contraseña incorrectos.',
+    'User already registered': 'Ya existe una cuenta con ese correo.',
+    'Email not confirmed': 'Confirma tu correo antes de ingresar (revisa tu bandeja de entrada).',
+    'Failed to fetch': 'Sin conexión. Revisa tu internet e inténtalo otra vez.',
+  }
+  for (const k of Object.keys(map)) if (raw.includes(k) || code === k) return map[k]
+  if (/Password should be at least/i.test(raw)) return 'La contraseña debe tener al menos 6 caracteres.'
+  if (/rate limit/i.test(raw)) return 'Demasiados intentos. Espera un minuto.'
+  return raw || 'Ocurrió un error inesperado.'
+}
